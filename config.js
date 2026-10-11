@@ -1,7 +1,7 @@
 /* Envoler Follow-ups settings. Edit this file, then upload it to GitHub. */
 window.ENVOLER_CONFIG = {
   // From Google Cloud Console > APIs & Services > Credentials (see README step 3)
-  GOOGLE_CLIENT_ID: "PASTE-YOUR-CLIENT-ID.apps.googleusercontent.com",
+  GOOGLE_CLIENT_ID: "14486273241-ct5badvdgdsgteii0madpjfn2kdunuq0.apps.googleusercontent.com",
 
   // The "Envoler Meetings" folder in Google Drive. Meeting notes are saved here.
   DRIVE_FOLDER_ID: "13w7MBnVf01JtHTBzL14M7h7onHdXgAcx",
@@ -12,8 +12,8 @@ window.ENVOLER_CONFIG = {
 
   // People who can own follow-ups. Add emails so they get Google Calendar reminders.
   TEAM: [
-    { name: "Piyush Jain", email: "" },
-    { name: "Abhishek Goyal", email: "" }
+    { name: "Piyush Jain", email: "admin@envoler.in" },
+    { name: "Abhishek Goyal", email: "envolerinnovations@gmail.com" }
   ],
 
   // Claude model used to pull follow-ups out of meeting notes (optional feature).
