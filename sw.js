@@ -1,7 +1,7 @@
 /* Envoler Follow-ups service worker: lets the app open without signal. */
-const VERSION = "envoler-v1";
+const VERSION = "envoler-v2";
 const SHELL = ["./", "./index.html", "./config.js", "./manifest.webmanifest",
-  "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon.png"];
+  "./icons/app-192.png", "./icons/app-512.png", "./icons/app-touch-180.png", "./icons/app-favicon.png", "./icons/envoler-logo.jpg"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

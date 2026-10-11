@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Envoler Follow-ups</title>
-<meta name="theme-color" content="#13233A">
+<meta name="theme-color" content="#082C50">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Follow-ups">
+<meta name="apple-mobile-web-app-title" content="Envoler">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icons/favicon.png">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/app-favicon.png">
+<link rel="apple-touch-icon" href="icons/app-touch-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
@@ -21,7 +21,7 @@
   --bg:#EEF3F8; --surface:#FFFFFF; --ink:#13233A; --muted:#5B6B80; --line:#D3DDE8;
   --sky:#1F5FA8; --sky-soft:#DCE8F6; --amber:#B07500; --amber-soft:#FDF0D3;
   --red:#B8392A; --red-soft:#F8DEDA; --green:#2C7A55; --green-soft:#DBF0E4;
-  --board:#13233A; --board-ink:#F3F6FA; --board-dim:#A3B3C8; --on-sky:#FFFFFF;
+  --board:#082C50; --board-ink:#F3F6FA; --board-dim:#A3B3C8; --on-sky:#FFFFFF;
   box-sizing:border-box;
 }
 @media (prefers-color-scheme:dark){
@@ -29,7 +29,7 @@
     --bg:#0E1826; --surface:#16233A; --ink:#E7EDF5; --muted:#9AAAC0; --line:#2A3B55;
     --sky:#79AEEB; --sky-soft:#1D3555; --amber:#F0B640; --amber-soft:#3A2F14;
     --red:#EE7F70; --red-soft:#43211D; --green:#6CC79A; --green-soft:#173627;
-    --board:#081120; --board-ink:#F3F6FA; --board-dim:#8597AF; --on-sky:#0E1826;
+    --board:#082C50; --board-ink:#F3F6FA; --board-dim:#8597AF; --on-sky:#0E1826;
   }
 }
 *,*::before,*::after{box-sizing:inherit}
@@ -112,6 +112,17 @@ ul.plain{padding-left:18px;margin:6px 0}
 .signin p{color:var(--board-dim);margin:8px 0 20px}
 .gbtn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;background:#fff;color:#1f1f1f;border:0;border-radius:12px;padding:13px;font-weight:600;font-size:16px}
 
+.reccard{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:14px}
+.reccard .btn{margin-top:8px}
+.btn.record{background:var(--red);border-color:var(--red);color:#fff;font-weight:600}
+.live{display:flex;align-items:center;gap:10px;font-family:"Barlow Semi Condensed",sans-serif;font-size:22px;font-weight:600;color:var(--red)}
+.live .dot{width:12px;height:12px;border-radius:50%;background:var(--red)}
+@media (prefers-reduced-motion:no-preference){ .live .dot{animation:blink 1.2s infinite} @keyframes blink{50%{opacity:.25}} }
+.tstatus{font-size:14px;margin-top:10px;padding:8px 10px;border-radius:8px;background:var(--sky-soft);color:var(--ink)}
+.tstatus.warn{background:var(--amber-soft)}
+.upload input{display:none}
+.signin-logo{display:block;width:100%;max-width:340px;border-radius:12px;margin:0 auto 18px}
+.kv{font-size:15px;margin:6px 0}
 nav.tabs{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);
   display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px);z-index:5}
 nav.tabs .in{display:grid;grid-template-columns:repeat(4,1fr);width:100%;max-width:720px}
@@ -136,7 +147,7 @@ nav.tabs[hidden]{display:none}
 <script>
 (() => {
 "use strict";
-const CFG = Object.assign({TEAM:[],TIME_ZONE:"Asia/Kolkata",REMINDER_TIME:"10:00",CLAUDE_MODEL:"claude-sonnet-5-5"}, window.ENVOLER_CONFIG||{});
+const CFG = Object.assign({TEAM:[],TIME_ZONE:"Asia/Kolkata",REMINDER_TIME:"10:00",CLAUDE_MODEL:"claude-sonnet-5-5",TRANSCRIBE_MODEL:"gpt-4o-transcribe",LONG_TRANSCRIBE_MODEL:"whisper-1"}, window.ENVOLER_CONFIG||{});
 const SCOPES = ["openid","email","profile",
   "https://www.googleapis.com/auth/drive",
   "https://www.googleapis.com/auth/spreadsheets",
@@ -170,7 +181,8 @@ const S = {
   sheetId: CFG.SHEET_ID || LS.get("sheetId",""),
   meetings:LS.get("cache",{}).meetings||[], followups:LS.get("cache",{}).followups||[],
   outbox:LS.get("outbox",[]), draft:LS.get("draft",null)||blankDraft(),
-  aiKey:LS.get("aiKey",""), useCal:LS.get("useCal",true),
+  aiKey:LS.get("aiKey",""), useCal:LS.get("useCal",true), oaKey:LS.get("oaKey",""), transLang:LS.get("transLang","spoken"),
+  trans:{pending:0,busy:false,msg:"",warn:false}, sheetInfo:null,
   loading:false, lastLoad:0, busy:false, peopleQ:"", recording:false, flushing:false,
   online:navigator.onLine, installEvt:null, error:""
 };
@@ -241,11 +253,12 @@ async function loadAll(quiet){
   if(!tokenOk()||!navigator.onLine) return;
   S.loading=!quiet; if(!quiet) render();
   try{
-    if(!S.me){
+    if(!S.me || !S.me.googleName){
       const u=await g("https://www.googleapis.com/oauth2/v3/userinfo");
-      const t=CFG.TEAM.find(p=>p.email && p.email.toLowerCase()===String(u.email).toLowerCase());
-      S.me={email:u.email,name:t?t.name:(u.name||u.email)}; LS.set("me",S.me);
+      S.me={email:u.email,googleName:u.name||u.email,name:u.name||u.email};
     }
+    { const t=CFG.TEAM.find(p=>p.email && p.email.toLowerCase()===String(S.me.email).toLowerCase());
+      S.me.name=t?t.name:S.me.googleName; LS.set("me",S.me); }
     await ensureSheet();
     await flushOutbox();
     const r=await g(`${SH}${S.sheetId}/values:batchGet?ranges=Meetings!A2:${M_END}&ranges=Followups!A2:${F_END}`);
@@ -348,6 +361,12 @@ async function flushOutbox(){
 }
 async function sync(){ await flushOutbox(); await loadAll(true); }
 
+async function loadSheetInfo(){
+  if(!S.sheetId||!tokenOk()) return;
+  try{ const f=await g(`https://www.googleapis.com/drive/v3/files/${S.sheetId}?fields=name,owners(displayName,emailAddress)&supportsAllDrives=true`);
+    const o=(f.owners||[])[0]; S.sheetInfo={name:f.name,owner:o?(o.emailAddress||o.displayName):""}; if(S.view==="settings") render(); }catch(e){}
+}
+
 /* ---------- names ---------- */
 const myName = () => S.me ? S.me.name : "";
 function teamNames(){ const n=CFG.TEAM.map(p=>p.name).filter(Boolean); if(myName() && !n.includes(myName())) n.unshift(myName()); return n; }
@@ -405,16 +424,15 @@ function viewToday(){
 function ownerOptions(sel){ return teamNames().map(n=>`<option ${n===sel?"selected":""}>${esc(n)}</option>`).join(""); }
 function viewLog(){
   const d=S.draft;
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   return `<h2>Log a meeting</h2>${banners()}
   <div class="two"><div><label for="person">Who did you meet</label><input id="person" value="${esc(d.person)}" placeholder="e.g. Col. Sharma" autocomplete="off"></div>
   <div><label for="org">Organisation</label><input id="org" value="${esc(d.org)}" placeholder="e.g. Central Railway" autocomplete="off"></div></div>
   <label for="mdate">Meeting date</label><input id="mdate" type="date" value="${esc(d.date)}">
+  ${recorderHTML()}
   <label for="notes">Notes or transcript</label>
-  <textarea id="notes" placeholder="Paste the transcript from your recorder app, or tap the mic on your keyboard and speak what was discussed, what was promised, and by when.">${esc(d.notes)}</textarea>
+  <textarea id="notes" placeholder="The transcript appears here. You can also type, paste notes, or use your keyboard's mic.">${esc(d.notes)}</textarea>
   <div class="hint">Say who owns each next step and when, like "Abhishek to send the training proposal by Friday". Your notes are kept on this phone until you save.</div>
   <div class="bar">
-    ${SR?`<button class="btn ${S.recording?"rec":""}" id="dictate">${S.recording?"Stop dictation":"Dictate"}</button>`:""}
     ${S.aiKey?`<button class="btn primary" id="extract" ${S.busy||!S.online?"disabled":""}>${S.busy?"Reading notes…":"Pull out follow-ups"}</button>`:""}
     <button class="btn" id="addItem">Add follow-up</button>
   </div>
@@ -473,10 +491,21 @@ function viewSettings(){
   return `<h2>Settings</h2>
   <div class="card"><h3>Account</h3><p>Signed in as ${esc(S.me?S.me.name:"")}${S.me?` (${esc(S.me.email)})`:""}</p>
     <div class="bar"><button class="btn" id="signOut">Sign out</button></div></div>
-  <div class="card"><h3>Team sheet</h3>
-    <p class="meta">All meetings and follow-ups are stored in the Google Sheet "${SHEET_NAME}". Paste this ID into config.js as SHEET_ID so everyone uses the same sheet.</p>
+  <div class="card"><h3>Where your data is saved</h3>
+    ${!CFG.SHEET_ID?`<div class="tstatus warn" style="margin:0 0 10px">The team sheet isn't locked in yet. Copy the Sheet ID below into SHEET_ID in config.js on GitHub. Until then, a teammate who can't see this sheet may get a separate sheet of their own.</div>`:""}
+    <p class="kv"><b>Meetings and follow-ups:</b> one shared Google Sheet for the whole team, "${esc(S.sheetInfo?S.sheetInfo.name:SHEET_NAME)}"${S.sheetInfo&&S.sheetInfo.owner?`, owned by ${esc(S.sheetInfo.owner)}`:""}. Everyone reads and writes the same sheet.</p>
+    <p class="kv"><b>Meeting notes:</b> one Google Doc per meeting in the "Envoler Meetings" Drive folder.</p>
+    <p class="kv"><b>Reminders:</b> in the Google Calendar of whoever saved the meeting, with an invite to the owner.</p>
+    <p class="kv"><b>On this phone:</b> a copy for offline use, your draft, and recordings waiting to be transcribed.</p>
+    <label>Sheet ID</label>
     <input readonly value="${esc(S.sheetId||"Created after first sign-in")}" onclick="this.select()">
-    ${S.sheetId?`<div class="bar"><a class="btn" href="https://docs.google.com/spreadsheets/d/${esc(S.sheetId)}" target="_blank" rel="noopener">Open sheet</a></div>`:""}</div>
+    <div class="bar">${S.sheetId?`<a class="btn" href="https://docs.google.com/spreadsheets/d/${esc(S.sheetId)}" target="_blank" rel="noopener">Open sheet</a>`:""}${CFG.DRIVE_FOLDER_ID?`<a class="btn" href="https://drive.google.com/drive/folders/${esc(CFG.DRIVE_FOLDER_ID)}" target="_blank" rel="noopener">Open Drive folder</a>`:""}</div></div>
+  <div class="card"><h3>Recording and transcription</h3>
+    <p class="meta">Recordings are turned into text by OpenAI. Paste an API key from platform.openai.com. It's stored only on this phone.</p>
+    <label for="oaKey">OpenAI API key</label><input id="oaKey" type="password" value="${esc(S.oaKey)}" placeholder="sk-…" autocomplete="off">
+    <label for="transLang">Transcript language</label>
+    <select id="transLang"><option value="spoken" ${S.transLang!=="english"?"selected":""}>As spoken (Hindi and Punjabi in Roman script)</option><option value="english" ${S.transLang==="english"?"selected":""}>Translate everything to English</option></select>
+    <div class="bar"><button class="btn primary" id="saveOa">Save</button>${S.oaKey?`<button class="btn danger" id="clearOa">Remove key</button>`:""}</div></div>
   <div class="card"><h3>Pull out follow-ups with Claude</h3>
     <p class="meta">Optional. Paste a Claude API key from console.anthropic.com. It's stored only on this phone.</p>
     <label for="aiKey">API key</label><input id="aiKey" type="password" value="${esc(S.aiKey)}" placeholder="sk-ant-…" autocomplete="off">
@@ -497,7 +526,8 @@ function installHint(){
 }
 function viewSignIn(){
   return `<div class="signin"><section class="board">
-    <div class="big" style="font-size:44px">Envoler Follow-ups</div>
+    <img class="signin-logo" src="icons/envoler-logo.jpg" alt="Envoler Innovations">
+    <div class="big" style="font-size:40px">Follow-ups</div>
     <p>Log every meeting, pull out the next steps, and get reminded before anything slips. Your data stays in your team's Google Drive.</p>
     <button class="gbtn" id="signIn"><svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>Sign in with Google</button>
     ${S.error?`<p style="color:#FFB4A8">${esc(S.error)}</p>`:""}
@@ -597,20 +627,194 @@ async function changeFollowup(id,act){
   if(S.online){ await flushOutbox(); render(); }
 }
 
-/* ---------- dictation ---------- */
-let rec=null;
-function toggleDictation(){
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition; if(!SR) return;
-  if(S.recording&&rec){ rec.stop(); return; }
+/* ---------- recording and transcription ---------- */
+// Audio is cut into 4-minute parts, saved on the phone (IndexedDB) and sent to OpenAI one part at a time.
+// Nothing is lost if the signal drops: parts wait on the phone until they can be transcribed.
+const SEG_MS = 4*60*1000;
+const IDB = {
+  db:null,
+  open(){ return this.db || (this.db = new Promise((res,rej)=>{ const r=indexedDB.open("envoler",1);
+    r.onupgradeneeded=()=>r.result.createObjectStore("audio",{keyPath:"id"});
+    r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); })); },
+  async run(mode,fn){ const db=await this.open(); return new Promise((res,rej)=>{ const t=db.transaction("audio",mode); const req=fn(t.objectStore("audio"));
+    t.oncomplete=()=>res(req?req.result:undefined); t.onerror=()=>rej(t.error); }); },
+  put(o){ return this.run("readwrite",st=>st.put(o)); },
+  del(id){ return this.run("readwrite",st=>st.delete(id)); },
+  all(){ return this.run("readonly",st=>st.getAll()); }
+};
+const R = {stream:null, mr:null, rotateT:null, timer:null, wake:null, mime:"", seq:0, session:"", startAt:0};
+const pad2 = n => String(n).padStart(2,"0");
+const clock = ms => { const t=Math.floor(ms/1000); const h=Math.floor(t/3600); return (h?h+":":"")+pad2(Math.floor(t%3600/60))+":"+pad2(t%60); };
+function pickMime(){
+  const c=["audio/webm;codecs=opus","audio/webm","audio/mp4;codecs=mp4a.40.2","audio/mp4","audio/aac"];
+  return c.find(t=>window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
+}
+function extFor(type){ type=String(type||"");
+  if(type.includes("webm")) return "webm"; if(type.includes("wav")) return "wav"; if(type.includes("ogg")) return "ogg";
+  if(type.includes("mpeg")||type.includes("mp3")) return "mp3"; return "m4a"; }
+
+async function startRecording(){
+  if(!window.MediaRecorder || !navigator.mediaDevices){ toast("Recording isn't supported in this browser. Use Upload a recording instead."); return; }
   captureDraft();
+  try{ R.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}}); }
+  catch(e){ toast("Microphone access is blocked. Allow the microphone for this app in your phone's settings."); return; }
+  R.mime=pickMime(); R.session=uid(); R.seq=0; R.startAt=Date.now(); S.recording=true;
+  try{ if(navigator.wakeLock) R.wake=await navigator.wakeLock.request("screen"); }catch(e){}
+  R.stream.getAudioTracks().forEach(t=>t.addEventListener("ended",()=>{ if(S.recording){ stopRecording(); toast("Recording stopped because the phone paused the microphone. What was recorded is saved."); } }));
+  startSegment();
+  R.timer=setInterval(()=>{ const el=$("#recTime"); if(el) el.textContent=clock(Date.now()-R.startAt); },1000);
+  render();
+}
+function startSegment(){
+  let mr;
+  try{ mr=new MediaRecorder(R.stream, Object.assign({audioBitsPerSecond:32000}, R.mime?{mimeType:R.mime}:{})); }
+  catch(e){ mr=new MediaRecorder(R.stream); }
+  const chunks=[], seq=R.seq++, t0=Date.now(), session=R.session, label=seq===0?new Date(R.startAt):null;
+  mr.ondataavailable=e=>{ if(e.data && e.data.size) chunks.push(e.data); };
+  mr.onstop=()=>{ if(!chunks.length) return; const type=mr.mimeType||R.mime||"audio/webm";
+    saveAudio({id:`${session}-${String(seq).padStart(4,"0")}`, blob:new Blob(chunks,{type}), type, dur:(Date.now()-t0)/1000, mode:"live",
+      label:label?`Recording, ${fmt(ymd(label))} ${pad2(label.getHours())}:${pad2(label.getMinutes())}`:""}); };
+  mr.start(1000); R.mr=mr;
+  R.rotateT=setTimeout(()=>{ if(S.recording && R.mr===mr){ try{ mr.stop(); }catch(e){} startSegment(); } }, SEG_MS);
+}
+function stopRecording(){
+  if(!S.recording) return;
+  S.recording=false; clearTimeout(R.rotateT); clearInterval(R.timer);
+  try{ if(R.mr && R.mr.state!=="inactive") R.mr.stop(); }catch(e){}
+  if(R.stream) R.stream.getTracks().forEach(t=>t.stop());
+  try{ if(R.wake) R.wake.release(); }catch(e){}
+  R.wake=null; render();
+}
+async function saveAudio(item){
+  item.createdAt=Date.now();
+  try{ await IDB.put(item); }catch(e){ R.memory=(R.memory||[]).concat(item); }
+  processQueue();
+}
+async function queuedAudio(){
+  let items=[]; try{ items=await IDB.all(); }catch(e){}
+  items=items.concat(R.memory||[]);
+  return items.sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
+}
+async function removeAudio(id){ try{ await IDB.del(id); }catch(e){} R.memory=(R.memory||[]).filter(x=>x.id!==id); }
+
+function audioDuration(file){
+  return new Promise(res=>{ const a=document.createElement("audio"); const u=URL.createObjectURL(file); let done=false;
+    const fin=v=>{ if(done) return; done=true; URL.revokeObjectURL(u); res(v); };
+    a.preload="metadata"; a.onloadedmetadata=()=>fin(isFinite(a.duration)?a.duration:NaN); a.onerror=()=>fin(NaN);
+    setTimeout(()=>fin(NaN),6000); a.src=u; });
+}
+function wavBlob(pcm,rate){
+  const buf=new ArrayBuffer(44+pcm.length*2), v=new DataView(buf); let o=0;
+  const str=t=>{ for(const ch of t) v.setUint8(o++,ch.charCodeAt(0)); }, u32=x=>{ v.setUint32(o,x,true); o+=4; }, u16=x=>{ v.setUint16(o,x,true); o+=2; };
+  str("RIFF"); u32(36+pcm.length*2); str("WAVE"); str("fmt "); u32(16); u16(1); u16(1); u32(rate); u32(rate*2); u16(2); u16(16); str("data"); u32(pcm.length*2);
+  for(let i=0;i<pcm.length;i++,o+=2) v.setInt16(o,pcm[i],true);
+  return new Blob([buf],{type:"audio/wav"});
+}
+async function splitLargeFile(file){
+  // Files over 24 MB are decoded on the phone and cut into 10-minute WAV parts (16 kHz mono).
+  const Ctx=window.AudioContext||window.webkitAudioContext;
+  let ctx; try{ ctx=new Ctx({sampleRate:16000}); }catch(e){ ctx=new Ctx(); }
+  const buf=await new Promise((res,rej)=>{ file.arrayBuffer().then(ab=>{ const p=ctx.decodeAudioData(ab,res,rej); if(p&&p.then) p.then(res,rej); },rej); });
+  try{ ctx.close(); }catch(e){}
+  const k=Math.max(1,Math.floor(buf.sampleRate/16000)), rate=buf.sampleRate/k;
+  const chans=[]; for(let c=0;c<buf.numberOfChannels;c++) chans.push(buf.getChannelData(c));
+  const total=Math.floor(buf.length/k), per=Math.min(Math.floor(rate*600), 11000000), parts=[];
+  for(let s=0;s<total;s+=per){
+    const len=Math.min(per,total-s), pcm=new Int16Array(len);
+    for(let i=0;i<len;i++){ let v=0; const base=(s+i)*k;
+      for(let j=0;j<k;j++) for(let c=0;c<chans.length;c++) v+=chans[c][base+j]||0;
+      v/=k*chans.length; pcm[i]=Math.max(-1,Math.min(1,v))*0x7fff; }
+    parts.push({blob:wavBlob(pcm,rate),dur:len/rate});
+  }
+  return parts;
+}
+async function handleUpload(file){
+  if(!file) return;
+  captureDraft();
+  const base="up"+uid(), label=`Uploaded recording: ${file.name}`;
+  S.trans.msg="Preparing the recording…"; S.trans.warn=false; render();
   try{
-    rec=new SR(); rec.lang="en-IN"; rec.continuous=true; rec.interimResults=false;
-    rec.onresult=e=>{ let t=""; for(let i=e.resultIndex;i<e.results.length;i++){ if(e.results[i].isFinal) t+=e.results[i][0].transcript+" "; }
-      if(t){ const ta=$("#notes"); const cur=ta?ta.value:S.draft.notes; S.draft.notes=cur+(cur&&!/\s$/.test(cur)?" ":"")+t; if(ta) ta.value=S.draft.notes; LS.set("draft",S.draft); } };
-    rec.onerror=e=>{ S.recording=false; render(); toast(e.error==="not-allowed"||e.error==="service-not-allowed"?"Microphone access is blocked. Allow it in your phone settings, or use the keyboard mic.":"Dictation stopped. Use the keyboard mic if it keeps failing."); };
-    rec.onend=()=>{ S.recording=false; render(); };
-    rec.start(); S.recording=true; render();
-  }catch(e){ S.recording=false; toast("Dictation isn't available here. Use the mic on your keyboard instead."); }
+    if(file.size<=24*1024*1024){
+      await saveAudio({id:`${base}-0000`,blob:file,type:file.type||"audio/m4a",dur:await audioDuration(file),mode:"upload",label});
+    } else {
+      S.trans.msg="This recording is large. Cutting it into parts on your phone…"; render();
+      const parts=await splitLargeFile(file);
+      for(let i=0;i<parts.length;i++) await saveAudio({id:`${base}-${String(i).padStart(4,"0")}`,blob:parts[i].blob,type:"audio/wav",dur:parts[i].dur,mode:"upload",label:i===0?label:""});
+    }
+  }catch(e){
+    S.trans.msg="This file couldn't be read on the phone. Try a shorter recording, or record inside the app instead."; S.trans.warn=true; render();
+  }
+}
+
+let qRunning=false;
+async function processQueue(){
+  if(qRunning) return; qRunning=true;
+  try{
+    let items=await queuedAudio();
+    S.trans.pending=items.length;
+    while(items.length){
+      if(!S.oaKey){ S.trans.msg=`${items.length} recording part${items.length>1?"s are":" is"} saved on this phone. Add an OpenAI key in Settings to turn ${items.length>1?"them":"it"} into text.`; S.trans.warn=true; break; }
+      if(!navigator.onLine){ S.trans.msg="Offline. Recordings are saved on this phone and will be transcribed when you're back online."; S.trans.warn=true; break; }
+      const it=items[0];
+      S.trans.busy=true; S.trans.warn=false; S.trans.msg=`Transcribing… ${items.length} part${items.length>1?"s":""} left`; renderRecStatus();
+      let text;
+      try{ text=await transcribe(it); }
+      catch(e){ S.trans.msg=e.message; S.trans.warn=true; S.trans.retry=true; break; }
+      captureDraft();
+      const add=(it.label?`\n[${it.label}]\n`:"")+text.trim();
+      const cur=S.draft.notes; S.draft.notes=cur?cur+(cur.endsWith("\n")?"":"\n")+add:add.replace(/^\n/,"");
+      LS.set("draft",S.draft);
+      const ta=$("#notes"); if(ta){ ta.value=S.draft.notes; ta.scrollTop=ta.scrollHeight; }
+      await removeAudio(it.id);
+      items=await queuedAudio(); S.trans.pending=items.length;
+      if(!items.length){ S.trans.msg="Transcript added to the notes. Check it, then save the meeting."; S.trans.warn=false; S.trans.retry=false; }
+    }
+  } finally { S.trans.busy=false; qRunning=false; renderRecStatus(); }
+}
+async function transcribe(it){
+  const english=S.transLang==="english";
+  const long=it.mode==="upload" && (!(it.dur>0) || it.dur>480);
+  const model=(english||long)?CFG.LONG_TRANSCRIBE_MODEL:CFG.TRANSCRIBE_MODEL;
+  const fd=new FormData();
+  fd.append("file",it.blob,"audio."+extFor(it.type));
+  fd.append("model",model);
+  fd.append("response_format","json");
+  fd.append("prompt",english
+    ? "Business meeting of Envoler Innovations, an Indian drone and UAV company."
+    : "Business meeting of Envoler Innovations, an Indian drone and UAV company. Speakers may mix English, Hindi and Punjabi. Write Hindi and Punjabi words in Roman script.");
+  let r;
+  try{ r=await fetch(`https://api.openai.com/v1/audio/${english?"translations":"transcriptions"}`,{method:"POST",headers:{Authorization:"Bearer "+S.oaKey},body:fd}); }
+  catch(e){ throw new Error("Couldn't reach OpenAI. The recording is saved; tap Retry when you have signal."); }
+  if(r.status===401) throw new Error("The OpenAI key was rejected. Check it in Settings, then tap Retry.");
+  if(r.status===429) throw new Error("OpenAI says the account is out of credit or busy. Check billing at platform.openai.com, then tap Retry.");
+  if(r.status===413) throw new Error("This part is too large for OpenAI. Record inside the app, or upload a shorter file.");
+  if(!r.ok){ let m=""; try{ m=(await r.json()).error.message; }catch(e){} throw new Error("Transcription failed"+(m?": "+m:".")+" The recording is saved; tap Retry."); }
+  const data=await r.json();
+  return String(data.text||"");
+}
+async function discardAudio(){
+  if(!confirm("Delete the recordings waiting on this phone? They haven't been turned into text yet.")) return;
+  for(const it of await queuedAudio()) await removeAudio(it.id);
+  S.trans={pending:0,busy:false,msg:"",warn:false}; render();
+}
+function recStatusHTML(){
+  const t=S.trans; if(!t.msg) return "";
+  return `<div class="tstatus ${t.warn?"warn":""}" id="tstatus">${esc(t.msg)}
+    ${t.retry&&!t.busy?`<div class="bar" style="margin-top:6px"><button class="btn" id="retryTrans">Retry</button><button class="btn danger" id="discardAudio">Delete recordings</button></div>`:""}
+    ${!S.oaKey&&t.pending?`<div class="bar" style="margin-top:6px"><button class="btn" id="openSettings">Open Settings</button></div>`:""}</div>`;
+}
+function renderRecStatus(){ const el=$("#recstat"); if(el) el.innerHTML=recStatusHTML(); }
+function recorderHTML(){
+  if(S.recording) return `<div class="reccard">
+    <div class="live"><span class="dot"></span>Recording <span id="recTime">${clock(Date.now()-R.startAt)}</span></div>
+    <div class="hint">Keep the app open with the screen on. The transcript appears in the notes as each 4-minute part is done.</div>
+    <button class="btn record wide" id="recStop">Stop recording</button>
+    <div id="recstat">${recStatusHTML()}</div></div>`;
+  return `<div class="reccard">
+    <button class="btn record wide" id="recStart">● Record meeting</button>
+    <label class="btn wide upload">Upload a recording<input type="file" id="upload" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.webm,.mp4"></label>
+    <div class="hint">For long meetings, or to keep the phone locked, record with your phone's Voice Memos or Recorder app and upload the file here afterwards.</div>
+    <div id="recstat">${recStatusHTML()}</div></div>`;
 }
 
 /* ---------- events ---------- */
@@ -620,6 +824,7 @@ document.addEventListener("input",e=>{
   if(S.view==="log"){ clearTimeout(saveT); saveT=setTimeout(captureDraft,400); }
 });
 document.addEventListener("change",e=>{
+  if(e.target.id==="upload"){ const f=e.target.files&&e.target.files[0]; e.target.value=""; handleUpload(f); return; }
   if(e.target.id==="useCal"||e.target.id==="useCal2"){ S.useCal=e.target.checked; LS.set("useCal",S.useCal); }
 });
 document.addEventListener("click",async e=>{
@@ -631,10 +836,15 @@ document.addEventListener("click",async e=>{
     case "signOut": return signOut();
     case "refresh": toast("Refreshing…"); return sync();
     case "syncNow": return sync();
-    case "openSettings": S.view="settings"; render(); window.scrollTo(0,0); return;
+    case "openSettings": if(S.view==="log") captureDraft(); S.view="settings"; render(); window.scrollTo(0,0); loadSheetInfo(); return;
     case "back": S.view="today"; render(); return;
     case "extract": return extract();
-    case "dictate": return toggleDictation();
+    case "recStart": return startRecording();
+    case "recStop": stopRecording(); toast("Recording saved. Transcribing…"); return;
+    case "retryTrans": S.trans.retry=false; return processQueue();
+    case "discardAudio": return discardAudio();
+    case "saveOa": S.oaKey=$("#oaKey").value.trim(); LS.set("oaKey",S.oaKey); S.transLang=$("#transLang").value; LS.set("transLang",S.transLang); toast("Saved on this phone."); render(); processQueue(); return;
+    case "clearOa": S.oaKey=""; LS.del("oaKey"); toast("Key removed."); render(); return;
     case "addItem": captureDraft(); S.draft.items.push({task:"",contact:S.draft.person,org:S.draft.org,due:addDays(today(),3),owner:myName()}); render(); return;
     case "saveMeeting": return saveMeeting();
     case "clearDraft": if(confirm("Clear this draft? The notes will be lost.")){ S.draft=blankDraft(); LS.set("draft",S.draft); render(); } return;
@@ -647,7 +857,7 @@ document.addEventListener("click",async e=>{
   if(t.dataset.newfor!=null){ S.draft=Object.assign(blankDraft(),{person:t.dataset.newfor,org:t.dataset.neworg}); LS.set("draft",S.draft); S.view="log"; render(); window.scrollTo(0,0); return; }
   const row=t.closest(".row"); if(row&&t.dataset.act) return changeFollowup(row.dataset.id,t.dataset.act);
 });
-window.addEventListener("online",()=>{ S.online=true; render(); sync(); });
+window.addEventListener("online",()=>{ S.online=true; render(); sync(); processQueue(); });
 window.addEventListener("offline",()=>{ S.online=false; render(); });
 document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible" && Date.now()-S.lastLoad>60000){ if(tokenOk()) sync(); } });
 window.addEventListener("beforeinstallprompt",e=>{ e.preventDefault(); S.installEvt=e; render(); });
@@ -656,6 +866,7 @@ window.addEventListener("beforeinstallprompt",e=>{ e.preventDefault(); S.install
 if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
 readRedirect();
 render();
+processQueue();
 if(tokenOk()) loadAll();
 else if(S.me && navigator.onLine && !returnedFromGoogle) signIn(true);
 })();
