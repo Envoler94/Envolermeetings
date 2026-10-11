@@ -4,7 +4,7 @@ window.ENVOLER_CONFIG = {
   GOOGLE_CLIENT_ID: "14486273241-ct5badvdgdsgteii0madpjfn2kdunuq0.apps.googleusercontent.com",
 
   // The "Envoler Meetings" folder in Google Drive
-  DRIVE_FOLDER_ID: "13w7MBnVf01JtHTBzL14M7h7onHdXgAcx",
+  DRIVE_FOLDER_ID: "1f-CKgVbPnkKIHN2h27mCuG7cBpOBP48b7j1PWEYhMHs",
 
   // Paste the Sheet ID from the app's Settings screen here
   SHEET_ID: "",
