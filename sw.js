@@ -1,6 +1,6 @@
 /* Envoler Follow-ups service worker: lets the app open without signal. */
-const VERSION = "envoler-v2";
-const SHELL = ["./", "./index.html", "./config.js", "./manifest.webmanifest",
+const VERSION = "envoler-v3";
+const SHELL = ["./", "./index.html", "./config.js", "./manifest.webmanifest", "./whisper-worker.js",
   "./icons/app-192.png", "./icons/app-512.png", "./icons/app-touch-180.png", "./icons/app-favicon.png", "./icons/envoler-logo.jpg"];
 
 self.addEventListener("install", e => {

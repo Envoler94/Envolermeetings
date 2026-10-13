@@ -147,7 +147,7 @@ nav.tabs[hidden]{display:none}
 <script>
 (() => {
 "use strict";
-const CFG = Object.assign({TEAM:[],TIME_ZONE:"Asia/Kolkata",REMINDER_TIME:"10:00",CLAUDE_MODEL:"claude-sonnet-5-5",TRANSCRIBE_MODEL:"gpt-4o-transcribe",LONG_TRANSCRIBE_MODEL:"whisper-1"}, window.ENVOLER_CONFIG||{});
+const CFG = Object.assign({TEAM:[],TIME_ZONE:"Asia/Kolkata",REMINDER_TIME:"10:00",CLAUDE_MODEL:"claude-sonnet-5-5"}, window.ENVOLER_CONFIG||{});
 const SCOPES = ["openid","email","profile",
   "https://www.googleapis.com/auth/drive",
   "https://www.googleapis.com/auth/spreadsheets",
@@ -181,7 +181,7 @@ const S = {
   sheetId: CFG.SHEET_ID || LS.get("sheetId",""),
   meetings:LS.get("cache",{}).meetings||[], followups:LS.get("cache",{}).followups||[],
   outbox:LS.get("outbox",[]), draft:LS.get("draft",null)||blankDraft(),
-  aiKey:LS.get("aiKey",""), useCal:LS.get("useCal",true), oaKey:LS.get("oaKey",""), transLang:LS.get("transLang","spoken"),
+  aiKey:LS.get("aiKey",""), useCal:LS.get("useCal",true), transLang:LS.get("transLang","english"), transQuality:LS.get("transQuality","standard"), showPaste:false, claudeReply:"",
   trans:{pending:0,busy:false,msg:"",warn:false}, sheetInfo:null,
   loading:false, lastLoad:0, busy:false, peopleQ:"", recording:false, flushing:false,
   online:navigator.onLine, installEvt:null, error:""
@@ -433,10 +433,13 @@ function viewLog(){
   <textarea id="notes" placeholder="The transcript appears here. You can also type, paste notes, or use your keyboard's mic.">${esc(d.notes)}</textarea>
   <div class="hint">Say who owns each next step and when, like "Abhishek to send the training proposal by Friday". Your notes are kept on this phone until you save.</div>
   <div class="bar">
-    ${S.aiKey?`<button class="btn primary" id="extract" ${S.busy||!S.online?"disabled":""}>${S.busy?"Reading notes…":"Pull out follow-ups"}</button>`:""}
+    <button class="btn primary" id="askClaude">Get follow-ups with Claude</button>
     <button class="btn" id="addItem">Add follow-up</button>
   </div>
-  ${!S.aiKey?`<div class="hint">To have follow-ups pulled out of your notes automatically, add a Claude API key in Settings.</div>`:""}
+  ${S.showPaste?`<div class="card"><h3>Paste Claude's reply</h3>
+     <p class="meta">In Claude: paste and send. When it answers, tap Copy under the reply, come back here and paste it below.</p>
+     <textarea id="claudeReply" style="min-height:120px" placeholder="Paste Claude's reply here">${esc(S.claudeReply)}</textarea>
+     <div class="bar"><button class="btn primary" id="applyClaude">Add to this meeting</button><button class="btn" id="askClaude">Copy the request again</button><button class="btn" id="cancelClaude">Cancel</button></div></div>`:""}
   ${(d.summary||d.decisions.length)?`<div class="card"><h3>Summary</h3>
      <textarea id="summary" style="min-height:110px">${esc(d.summary)}</textarea>
      ${d.decisions.length?`<label>Decisions</label><ul class="plain">${d.decisions.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:""}</div>`:""}
@@ -501,15 +504,13 @@ function viewSettings(){
     <input readonly value="${esc(S.sheetId||"Created after first sign-in")}" onclick="this.select()">
     <div class="bar">${S.sheetId?`<a class="btn" href="https://docs.google.com/spreadsheets/d/${esc(S.sheetId)}" target="_blank" rel="noopener">Open sheet</a>`:""}${CFG.DRIVE_FOLDER_ID?`<a class="btn" href="https://drive.google.com/drive/folders/${esc(CFG.DRIVE_FOLDER_ID)}" target="_blank" rel="noopener">Open Drive folder</a>`:""}</div></div>
   <div class="card"><h3>Recording and transcription</h3>
-    <p class="meta">Recordings are turned into text by OpenAI. Paste an API key from platform.openai.com. It's stored only on this phone.</p>
-    <label for="oaKey">OpenAI API key</label><input id="oaKey" type="password" value="${esc(S.oaKey)}" placeholder="sk-…" autocomplete="off">
+    <p class="meta">Speech is turned into text on this phone. It's free, needs no account or key, and the audio never leaves the phone. The first time, the app downloads the speech model, so use Wi-Fi.</p>
     <label for="transLang">Transcript language</label>
-    <select id="transLang"><option value="spoken" ${S.transLang!=="english"?"selected":""}>As spoken (Hindi and Punjabi in Roman script)</option><option value="english" ${S.transLang==="english"?"selected":""}>Translate everything to English</option></select>
-    <div class="bar"><button class="btn primary" id="saveOa">Save</button>${S.oaKey?`<button class="btn danger" id="clearOa">Remove key</button>`:""}</div></div>
-  <div class="card"><h3>Pull out follow-ups with Claude</h3>
-    <p class="meta">Optional. Paste a Claude API key from console.anthropic.com. It's stored only on this phone.</p>
-    <label for="aiKey">API key</label><input id="aiKey" type="password" value="${esc(S.aiKey)}" placeholder="sk-ant-…" autocomplete="off">
-    <div class="bar"><button class="btn primary" id="saveKey">Save key</button>${S.aiKey?`<button class="btn danger" id="clearKey">Remove key</button>`:""}</div></div>
+    <select id="transLang"><option value="english" ${S.transLang!=="spoken"?"selected":""}>Translate everything to English</option><option value="spoken" ${S.transLang==="spoken"?"selected":""}>As spoken (Hindi in Hindi script)</option></select>
+    <label for="transQuality">Quality</label>
+    <select id="transQuality"><option value="standard" ${S.transQuality!=="high"?"selected":""}>Standard: faster, about 80 MB download</option><option value="high" ${S.transQuality==="high"?"selected":""}>High accuracy: slower, about 250 MB download</option></select>
+    <div class="bar"><button class="btn primary" id="saveTrans">Save</button><button class="btn" id="getModel">Download the model now</button></div>
+    <div id="recstat">${recStatusHTML()}</div></div>
   <div class="card"><h3>Reminders</h3>
     <label class="check"><input type="checkbox" id="useCal2" ${S.useCal?"checked":""}> Add follow-ups to Google Calendar</label>
     <p class="meta">Each follow-up becomes a ${esc(CFG.REMINDER_TIME)} calendar reminder on its due date, plus one the day before. Teammates with an email in config.js get an invite.</p></div>
@@ -561,41 +562,48 @@ function matchOwner(name){
   const hit=teamNames().find(t=>t.toLowerCase().includes(n)||n.includes(t.toLowerCase().split(" ")[0]));
   return hit||myName();
 }
-async function extract(){
-  captureDraft();
+function claudePrompt(){
   const d=S.draft;
-  if(!d.notes.trim()){ toast("Add notes or a transcript first."); return; }
-  S.busy=true; render();
-  const prompt=`You help Envoler Innovations, an Indian drone and UAV company, keep track of meetings with clients, government bodies, PSUs and partners.
+  return `You help Envoler Innovations, an Indian drone and UAV company, keep track of meetings with clients, government bodies, PSUs and partners.
 Today is ${today()} (YYYY-MM-DD). The notes were written by ${myName()}. Team members: ${teamNames().join(", ")}.
-Read the meeting notes and return ONLY a JSON object, no other text:
+Read the meeting notes below and reply with ONLY a JSON object in one code block, nothing else:
 {"summary": "3 to 5 plain sentences on what was discussed and agreed",
  "decisions": ["short decision"],
  "followups": [{"task": "specific next step starting with a verb", "contact": "person it concerns", "org": "their organisation", "due": "YYYY-MM-DD", "owner": "team member name, or 'me' if the writer owns it"}]}
 Resolve relative dates like "next Tuesday" against today. If no date is given for a follow-up, use ${addDays(today(),3)}. Include every promise, document to send, call to make, or meeting to set up. Do not invent commitments.
 Meeting with: ${d.person||"unknown"} (${d.org||"unknown organisation"}), on ${d.date}.
 Notes:
-"""${d.notes.slice(0,40000)}"""`;
-  try{
-    const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"content-type":"application/json","x-api-key":S.aiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-      body:JSON.stringify({model:CFG.CLAUDE_MODEL,max_tokens:3000,messages:[{role:"user",content:prompt}]})});
-    if(r.status===401) throw new Error("key");
-    if(r.status===429) throw new Error("rate");
-    if(!r.ok) throw new Error("http");
-    const data=await r.json();
-    const text=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").replace(/```json|```/g,"").trim();
-    const out=JSON.parse(text.slice(text.indexOf("{"),text.lastIndexOf("}")+1));
-    d.summary=String(out.summary||"");
-    d.decisions=Array.isArray(out.decisions)?out.decisions.map(String).slice(0,12):[];
-    const items=(Array.isArray(out.followups)?out.followups:[]).slice(0,20).map(f=>({
-      task:String(f.task||""),contact:String(f.contact||d.person||""),org:String(f.org||d.org||""),
-      due:/^\d{4}-\d{2}-\d{2}$/.test(f.due||"")?f.due:addDays(today(),3),owner:matchOwner(f.owner)})).filter(f=>f.task);
-    d.items=d.items.concat(items); LS.set("draft",d);
-    toast(items.length?`Found ${items.length} follow-up${items.length>1?"s":""}. Check them before saving.`:"No follow-ups found in these notes.");
-  }catch(e){
-    toast(e.message==="key"?"The Claude API key was rejected. Check it in Settings.":e.message==="rate"?"Too many requests. Wait a minute and try again.":"Couldn't read the notes. Try again, or add follow-ups by hand.");
-  }
-  S.busy=false; render();
+"""${d.notes.slice(0,60000)}"""`;
+}
+function copyText(t){
+  if(navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(t).then(()=>true,()=>fallbackCopy(t));
+  return Promise.resolve(fallbackCopy(t));
+}
+function fallbackCopy(t){
+  const ta=document.createElement("textarea"); ta.value=t; ta.style.position="fixed"; ta.style.opacity="0"; document.body.appendChild(ta);
+  ta.select(); let ok=false; try{ ok=document.execCommand("copy"); }catch(e){} ta.remove(); return ok;
+}
+function askClaude(){
+  captureDraft();
+  if(!S.draft.notes.trim()){ toast("Add notes or a transcript first."); return; }
+  copyText(claudePrompt()).then(ok=>toast(ok?"Request copied. Paste it in Claude and send.":"Couldn't copy automatically. Select the notes and copy them into Claude."));
+  window.open("https://claude.ai/new","_blank","noopener");
+  S.showPaste=true; render();
+}
+function applyClaude(){
+  const d=S.draft, raw=($("#claudeReply")||{}).value||S.claudeReply||"";
+  let out;
+  try{ const t=raw.replace(/```json|```/g,""); out=JSON.parse(t.slice(t.indexOf("{"),t.lastIndexOf("}")+1)); }
+  catch(e){ toast("That doesn't look like Claude's full reply. Copy the whole reply and try again."); return; }
+  captureDraft();
+  if(out.summary) d.summary=String(out.summary);
+  if(Array.isArray(out.decisions)) d.decisions=out.decisions.map(String).slice(0,12);
+  const items=(Array.isArray(out.followups)?out.followups:[]).slice(0,20).map(f=>({
+    task:String(f.task||""),contact:String(f.contact||d.person||""),org:String(f.org||d.org||""),
+    due:/^\d{4}-\d{2}-\d{2}$/.test(f.due||"")?f.due:addDays(today(),3),owner:matchOwner(f.owner)})).filter(f=>f.task);
+  d.items=d.items.concat(items); LS.set("draft",d);
+  S.showPaste=false; S.claudeReply=""; render();
+  toast(items.length?`Added ${items.length} follow-up${items.length>1?"s":""}. Check them before saving.`:"Summary added. No follow-ups were found.");
 }
 async function saveMeeting(){
   captureDraft();
@@ -703,44 +711,13 @@ function audioDuration(file){
     a.preload="metadata"; a.onloadedmetadata=()=>fin(isFinite(a.duration)?a.duration:NaN); a.onerror=()=>fin(NaN);
     setTimeout(()=>fin(NaN),6000); a.src=u; });
 }
-function wavBlob(pcm,rate){
-  const buf=new ArrayBuffer(44+pcm.length*2), v=new DataView(buf); let o=0;
-  const str=t=>{ for(const ch of t) v.setUint8(o++,ch.charCodeAt(0)); }, u32=x=>{ v.setUint32(o,x,true); o+=4; }, u16=x=>{ v.setUint16(o,x,true); o+=2; };
-  str("RIFF"); u32(36+pcm.length*2); str("WAVE"); str("fmt "); u32(16); u16(1); u16(1); u32(rate); u32(rate*2); u16(2); u16(16); str("data"); u32(pcm.length*2);
-  for(let i=0;i<pcm.length;i++,o+=2) v.setInt16(o,pcm[i],true);
-  return new Blob([buf],{type:"audio/wav"});
-}
-async function splitLargeFile(file){
-  // Files over 24 MB are decoded on the phone and cut into 10-minute WAV parts (16 kHz mono).
-  const Ctx=window.AudioContext||window.webkitAudioContext;
-  let ctx; try{ ctx=new Ctx({sampleRate:16000}); }catch(e){ ctx=new Ctx(); }
-  const buf=await new Promise((res,rej)=>{ file.arrayBuffer().then(ab=>{ const p=ctx.decodeAudioData(ab,res,rej); if(p&&p.then) p.then(res,rej); },rej); });
-  try{ ctx.close(); }catch(e){}
-  const k=Math.max(1,Math.floor(buf.sampleRate/16000)), rate=buf.sampleRate/k;
-  const chans=[]; for(let c=0;c<buf.numberOfChannels;c++) chans.push(buf.getChannelData(c));
-  const total=Math.floor(buf.length/k), per=Math.min(Math.floor(rate*600), 11000000), parts=[];
-  for(let s=0;s<total;s+=per){
-    const len=Math.min(per,total-s), pcm=new Int16Array(len);
-    for(let i=0;i<len;i++){ let v=0; const base=(s+i)*k;
-      for(let j=0;j<k;j++) for(let c=0;c<chans.length;c++) v+=chans[c][base+j]||0;
-      v/=k*chans.length; pcm[i]=Math.max(-1,Math.min(1,v))*0x7fff; }
-    parts.push({blob:wavBlob(pcm,rate),dur:len/rate});
-  }
-  return parts;
-}
 async function handleUpload(file){
   if(!file) return;
   captureDraft();
   const base="up"+uid(), label=`Uploaded recording: ${file.name}`;
   S.trans.msg="Preparing the recording…"; S.trans.warn=false; render();
   try{
-    if(file.size<=24*1024*1024){
-      await saveAudio({id:`${base}-0000`,blob:file,type:file.type||"audio/m4a",dur:await audioDuration(file),mode:"upload",label});
-    } else {
-      S.trans.msg="This recording is large. Cutting it into parts on your phone…"; render();
-      const parts=await splitLargeFile(file);
-      for(let i=0;i<parts.length;i++) await saveAudio({id:`${base}-${String(i).padStart(4,"0")}`,blob:parts[i].blob,type:"audio/wav",dur:parts[i].dur,mode:"upload",label:i===0?label:""});
-    }
+    await saveAudio({id:`${base}-0000`,blob:file,type:file.type||"audio/m4a",dur:await audioDuration(file),mode:"upload",label});
   }catch(e){
     S.trans.msg="This file couldn't be read on the phone. Try a shorter recording, or record inside the app instead."; S.trans.warn=true; render();
   }
@@ -753,10 +730,9 @@ async function processQueue(){
     let items=await queuedAudio();
     S.trans.pending=items.length;
     while(items.length){
-      if(!S.oaKey){ S.trans.msg=`${items.length} recording part${items.length>1?"s are":" is"} saved on this phone. Add an OpenAI key in Settings to turn ${items.length>1?"them":"it"} into text.`; S.trans.warn=true; break; }
-      if(!navigator.onLine){ S.trans.msg="Offline. Recordings are saved on this phone and will be transcribed when you're back online."; S.trans.warn=true; break; }
+      if(S.recording){ S.trans.msg="Recording is saved as you go. It will be turned into text when you tap Stop."; S.trans.warn=false; break; }
       const it=items[0];
-      S.trans.busy=true; S.trans.warn=false; S.trans.msg=`Transcribing… ${items.length} part${items.length>1?"s":""} left`; renderRecStatus();
+      S.trans.busy=true; S.trans.warn=false; S.trans.msg=`Turning speech into text on this phone… ${items.length} part${items.length>1?"s":""} left. Keep the app open.`; renderRecStatus();
       let text;
       try{ text=await transcribe(it); }
       catch(e){ S.trans.msg=e.message; S.trans.warn=true; S.trans.retry=true; break; }
@@ -771,26 +747,61 @@ async function processQueue(){
     }
   } finally { S.trans.busy=false; qRunning=false; renderRecStatus(); }
 }
+let worker=null, wReq=0;
+const wPending=new Map();
+const modelId=()=>S.transQuality==="high"?"onnx-community/whisper-small":"onnx-community/whisper-base";
+function getWorker(){
+  if(worker) return worker;
+  worker=new Worker("whisper-worker.js",{type:"module"});
+  worker.onmessage=e=>{ const m=e.data;
+    if(m.type==="progress"){ S.trans.msg=m.text; S.trans.warn=false; renderRecStatus(); return; }
+    const p=wPending.get(m.id); if(!p) return; wPending.delete(m.id);
+    if(m.error) p.reject(new Error(m.error)); else p.resolve(m.text||""); };
+  worker.onerror=ev=>{ ev.preventDefault&&ev.preventDefault(); for(const p of wPending.values()) p.reject(new Error(navigator.onLine?"Failed to load the speech engine":"network: offline")); wPending.clear(); worker=null; };
+  return worker;
+}
+function runWhisper(audio,warmup){
+  return new Promise((resolve,reject)=>{ const id=++wReq; wPending.set(id,{resolve,reject});
+    const msg={id,model:modelId(),task:S.transLang==="spoken"?"transcribe":"translate",warmup:!!warmup};
+    if(audio){ msg.audio=audio; getWorker().postMessage(msg,[audio.buffer]); } else getWorker().postMessage(msg); });
+}
+async function decode16k(blob){
+  const Ctx=window.AudioContext||window.webkitAudioContext;
+  let ctx; try{ ctx=new Ctx({sampleRate:16000}); }catch(e){ ctx=new Ctx(); }
+  const ab=await blob.arrayBuffer();
+  const buf=await new Promise((res,rej)=>{ const p=ctx.decodeAudioData(ab,res,rej); if(p&&p.then) p.then(res,rej); });
+  try{ ctx.close(); }catch(e){}
+  let mono=buf.getChannelData(0);
+  if(buf.numberOfChannels>1){ const b=buf.getChannelData(1), m=new Float32Array(mono.length); for(let i=0;i<m.length;i++) m[i]=(mono[i]+b[i])/2; mono=m; }
+  if(buf.sampleRate===16000) return mono;
+  const ratio=buf.sampleRate/16000, n=Math.floor(mono.length/ratio), out=new Float32Array(n);
+  for(let i=0;i<n;i++){ const x=i*ratio, j=Math.floor(x), f=x-j; out[i]=(mono[j]||0)*(1-f)+(mono[j+1]||0)*f; }
+  return out;
+}
+function whisperError(e){
+  const m=String(e&&e.message||e);
+  if(/fetch|network|Failed to load|404|Load failed/i.test(m)) return "The speech model needs to download once. Connect to Wi-Fi, then tap Retry. Your recording is saved.";
+  if(/memory|allocation|OOM/i.test(m)) return "The phone ran out of memory on this recording. Choose Standard quality in Settings, or record shorter parts, then tap Retry.";
+  return "Couldn't turn this recording into text ("+m.slice(0,120)+"). Your recording is saved; tap Retry.";
+}
 async function transcribe(it){
-  const english=S.transLang==="english";
-  const long=it.mode==="upload" && (!(it.dur>0) || it.dur>480);
-  const model=(english||long)?CFG.LONG_TRANSCRIBE_MODEL:CFG.TRANSCRIBE_MODEL;
-  const fd=new FormData();
-  fd.append("file",it.blob,"audio."+extFor(it.type));
-  fd.append("model",model);
-  fd.append("response_format","json");
-  fd.append("prompt",english
-    ? "Business meeting of Envoler Innovations, an Indian drone and UAV company."
-    : "Business meeting of Envoler Innovations, an Indian drone and UAV company. Speakers may mix English, Hindi and Punjabi. Write Hindi and Punjabi words in Roman script.");
-  let r;
-  try{ r=await fetch(`https://api.openai.com/v1/audio/${english?"translations":"transcriptions"}`,{method:"POST",headers:{Authorization:"Bearer "+S.oaKey},body:fd}); }
-  catch(e){ throw new Error("Couldn't reach OpenAI. The recording is saved; tap Retry when you have signal."); }
-  if(r.status===401) throw new Error("The OpenAI key was rejected. Check it in Settings, then tap Retry.");
-  if(r.status===429) throw new Error("OpenAI says the account is out of credit or busy. Check billing at platform.openai.com, then tap Retry.");
-  if(r.status===413) throw new Error("This part is too large for OpenAI. Record inside the app, or upload a shorter file.");
-  if(!r.ok){ let m=""; try{ m=(await r.json()).error.message; }catch(e){} throw new Error("Transcription failed"+(m?": "+m:".")+" The recording is saved; tap Retry."); }
-  const data=await r.json();
-  return String(data.text||"");
+  let audio;
+  try{ audio=await decode16k(it.blob); }
+  catch(e){ throw new Error("This recording couldn't be read on this phone. Try another file, or record inside the app."); }
+  const SL=16000*300, n=Math.ceil(audio.length/SL)||1; let text="";
+  for(let k=0;k<n;k++){
+    if(n>1){ S.trans.msg=`Turning speech into text on this phone… section ${k+1} of ${n}. Keep the app open.`; renderRecStatus(); }
+    const part=audio.slice(k*SL,Math.min(audio.length,(k+1)*SL));
+    try{ text+=(text?" ":"")+String(await runWhisper(part)).trim(); }
+    catch(e){ throw new Error(whisperError(e)); }
+  }
+  return text;
+}
+async function downloadModel(){
+  S.trans.msg="Preparing the speech model…"; S.trans.warn=false; renderRecStatus();
+  try{ await runWhisper(null,true); S.trans.msg="The speech model is ready on this phone. Recordings will now work even offline."; }
+  catch(e){ S.trans.msg=whisperError(e); S.trans.warn=true; }
+  renderRecStatus();
 }
 async function discardAudio(){
   if(!confirm("Delete the recordings waiting on this phone? They haven't been turned into text yet.")) return;
@@ -801,13 +812,13 @@ function recStatusHTML(){
   const t=S.trans; if(!t.msg) return "";
   return `<div class="tstatus ${t.warn?"warn":""}" id="tstatus">${esc(t.msg)}
     ${t.retry&&!t.busy?`<div class="bar" style="margin-top:6px"><button class="btn" id="retryTrans">Retry</button><button class="btn danger" id="discardAudio">Delete recordings</button></div>`:""}
-    ${!S.oaKey&&t.pending?`<div class="bar" style="margin-top:6px"><button class="btn" id="openSettings">Open Settings</button></div>`:""}</div>`;
+</div>`;
 }
 function renderRecStatus(){ const el=$("#recstat"); if(el) el.innerHTML=recStatusHTML(); }
 function recorderHTML(){
   if(S.recording) return `<div class="reccard">
     <div class="live"><span class="dot"></span>Recording <span id="recTime">${clock(Date.now()-R.startAt)}</span></div>
-    <div class="hint">Keep the app open with the screen on. The transcript appears in the notes as each 4-minute part is done.</div>
+    <div class="hint">Keep the app open with the screen on. When you tap Stop, the recording is turned into text on this phone.</div>
     <button class="btn record wide" id="recStop">Stop recording</button>
     <div id="recstat">${recStatusHTML()}</div></div>`;
   return `<div class="reccard">
@@ -821,6 +832,7 @@ function recorderHTML(){
 let saveT;
 document.addEventListener("input",e=>{
   if(e.target.id==="pq"){ S.peopleQ=e.target.value; render(); return; }
+  if(e.target.id==="claudeReply"){ S.claudeReply=e.target.value; return; }
   if(S.view==="log"){ clearTimeout(saveT); saveT=setTimeout(captureDraft,400); }
 });
 document.addEventListener("change",e=>{
@@ -838,18 +850,20 @@ document.addEventListener("click",async e=>{
     case "syncNow": return sync();
     case "openSettings": if(S.view==="log") captureDraft(); S.view="settings"; render(); window.scrollTo(0,0); loadSheetInfo(); return;
     case "back": S.view="today"; render(); return;
-    case "extract": return extract();
+    case "askClaude": return askClaude();
+    case "applyClaude": return applyClaude();
+    case "cancelClaude": S.showPaste=false; S.claudeReply=""; render(); return;
+    case "getModel": return downloadModel();
+    case "saveTrans": S.transLang=$("#transLang").value; LS.set("transLang",S.transLang); S.transQuality=$("#transQuality").value; LS.set("transQuality",S.transQuality); toast("Saved."); return;
     case "recStart": return startRecording();
     case "recStop": stopRecording(); toast("Recording saved. Transcribing…"); return;
     case "retryTrans": S.trans.retry=false; return processQueue();
     case "discardAudio": return discardAudio();
-    case "saveOa": S.oaKey=$("#oaKey").value.trim(); LS.set("oaKey",S.oaKey); S.transLang=$("#transLang").value; LS.set("transLang",S.transLang); toast("Saved on this phone."); render(); processQueue(); return;
-    case "clearOa": S.oaKey=""; LS.del("oaKey"); toast("Key removed."); render(); return;
+
     case "addItem": captureDraft(); S.draft.items.push({task:"",contact:S.draft.person,org:S.draft.org,due:addDays(today(),3),owner:myName()}); render(); return;
     case "saveMeeting": return saveMeeting();
     case "clearDraft": if(confirm("Clear this draft? The notes will be lost.")){ S.draft=blankDraft(); LS.set("draft",S.draft); render(); } return;
-    case "saveKey": S.aiKey=$("#aiKey").value.trim(); LS.set("aiKey",S.aiKey); toast(S.aiKey?"Key saved on this phone.":"Key removed."); render(); return;
-    case "clearKey": S.aiKey=""; LS.del("aiKey"); toast("Key removed."); render(); return;
+
     case "install": if(S.installEvt){ S.installEvt.prompt(); S.installEvt=null; render(); } return;
     case "hideInstall": LS.set("hideInstall",true); render(); return;
   }
@@ -863,6 +877,7 @@ document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==
 window.addEventListener("beforeinstallprompt",e=>{ e.preventDefault(); S.installEvt=e; render(); });
 
 /* ---------- start ---------- */
+LS.del("oaKey"); LS.del("aiKey");
 if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
 readRedirect();
 render();
