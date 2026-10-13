@@ -166,7 +166,7 @@ const LS = {
   set(k,v){ try{ localStorage.setItem("env_"+k,JSON.stringify(v)); }catch(e){} },
   del(k){ try{ localStorage.removeItem("env_"+k); }catch(e){} }
 };
-const blankDraft = () => ({person:"",org:"",date:today(),notes:"",summary:"",decisions:[],items:[]});
+const blankDraft = () => ({person:"",org:"",date:today(),location:"",notes:"",summary:"",decisions:[],items:[]});
 
 const S = {
   view:"today", scope:"mine",
@@ -200,7 +200,7 @@ async function api(action, data){
   return j;
 }
 function pinFailed(){
-  S.pin=""; LS.del("pin"); S.error="The team PIN has changed. Enter the new PIN to continue."; render();
+  S.pin=""; LS.del("pin"); S.error="The team code has changed. Enter the new code to continue."; render();
 }
 const signedIn = () => !!(S.me && S.me.name && S.pin);
 async function loadAll(quiet){
@@ -220,7 +220,7 @@ async function loadAll(quiet){
   }
   S.loading=false; render();
 }
-function teamEmail(name){ const t=CFG.TEAM.find(p=>p.name===name); return t&&t.email?t.email:""; }
+function teamEmail(name){ const t=CFG.TEAM.find(p=>p.name===name); if(t&&t.email) return t.email; if(S.me&&name===S.me.name&&S.me.email) return S.me.email; return ""; }
 
 /* ---------- Outbox: saves work offline and syncs when signal returns ---------- */
 function queue(op){ S.outbox.push(op); LS.set("outbox",S.outbox); }
@@ -250,7 +250,13 @@ async function sync(){ await flushOutbox(); await loadAll(true); }
 
 /* ---------- names ---------- */
 const myName = () => S.me ? S.me.name : "";
-function teamNames(){ const n=CFG.TEAM.map(p=>p.name).filter(Boolean); if(myName() && !n.includes(myName())) n.unshift(myName()); return n; }
+function teamNames(){
+  const n=[];
+  const add=x=>{ x=String(x||"").trim(); if(x && !n.some(y=>y.toLowerCase()===x.toLowerCase())) n.push(x); };
+  add(myName()); CFG.TEAM.forEach(p=>add(p.name));
+  S.followups.forEach(f=>add(f.owner)); S.meetings.forEach(m=>add(m.createdBy));
+  return n;
+}
 
 /* ---------- views ---------- */
 function bucket(f){ const t=today(); if(f.due<t) return "overdue"; if(f.due===t) return "today"; if(f.due<=addDays(t,7)) return "week"; return "later"; }
@@ -307,7 +313,9 @@ function viewLog(){
   return `<h2>Log a meeting</h2>${banners()}
   <div class="two"><div><label for="person">Who did you meet</label><input id="person" value="${esc(d.person)}" placeholder="e.g. Col. Sharma" autocomplete="off"></div>
   <div><label for="org">Organisation</label><input id="org" value="${esc(d.org)}" placeholder="e.g. Central Railway" autocomplete="off"></div></div>
-  <label for="mdate">Meeting date</label><input id="mdate" type="date" value="${esc(d.date)}">
+  <div class="two"><div><label for="mdate">Meeting date</label><input id="mdate" type="date" value="${esc(d.date)}"></div>
+  <div><label for="mloc">Location</label><input id="mloc" value="${esc(d.location||"")}" placeholder="e.g. Rail Bhawan, Delhi" autocomplete="off"></div></div>
+  <button class="x" id="useLoc" style="color:var(--sky)">📍 Use my current location</button>
   ${recorderHTML()}
   <label for="notes">Notes or transcript</label>
   <textarea id="notes" placeholder="The transcript appears here. You can also type, paste notes, or use your keyboard's mic.">${esc(d.notes)}</textarea>
@@ -353,7 +361,7 @@ function viewPeople(){
       <div class="meta">${esc(p.org||"No organisation")}${p.last?`. Last met ${fmt(p.last)}`:""}</div></div>
       ${p.open.length?`<span class="pill ${od?"warn":""}">${p.open.length} open</span>`:""}</summary>
       <div class="body">${next?`<p><b>Next:</b> ${esc(next.task)} (${fmt(next.due)})</p>`:""}
-      ${p.meetings.length?`<p class="meta">Meetings</p><ul class="plain">${p.meetings.map(x=>{const t=x.summary||x.notes||""; return `<li>${fmt(x.date)}: ${esc(t.slice(0,140))}${t.length>140?"…":""}</li>`;}).join("")}</ul>`:""}
+      ${p.meetings.length?`<p class="meta">Meetings</p><ul class="plain">${p.meetings.map(x=>{const t=x.summary||x.notes||""; return `<li>${fmt(x.date)}${x.location?` (${esc(x.location)})`:""}: ${esc(t.slice(0,140))}${t.length>140?"…":""}</li>`;}).join("")}</ul>`:""}
       <button class="btn" data-newfor="${esc(p.name)}" data-neworg="${esc(p.org)}">Log another meeting</button></div></details>`;}).join("")
     : `<div class="empty">${S.peopleQ?"Nobody matches that search.":"People you meet will be listed here after you log a meeting."}</div>`}</div>`;
 }
@@ -363,7 +371,7 @@ function viewMeetings(){
   ${S.info?`<div class="bar" style="margin-top:0"><a class="btn" href="${esc(S.info.folderUrl)}" target="_blank" rel="noopener">Open Drive folder</a><a class="btn" href="${esc(S.info.sheetUrl)}" target="_blank" rel="noopener">Open team sheet</a></div>`:""}
   <div style="margin-top:12px">${S.meetings.length?S.meetings.map(x=>`<details class="person"><summary><div>
       <div class="task">${esc(x.person||"Meeting")}${x.org?`, ${esc(x.org)}`:""}</div>
-      <div class="meta">${fmt(x.date)}${x.createdBy?`. Logged by ${esc(x.createdBy)}`:""}</div>${pend.has(x.id)?`<div class="pending">Waiting to sync</div>`:""}</div></summary>
+      <div class="meta">${fmt(x.date)}${x.location?`, ${esc(x.location)}`:""}${x.createdBy?`. Logged by ${esc(x.createdBy)}`:""}</div>${pend.has(x.id)?`<div class="pending">Waiting to sync</div>`:""}</div></summary>
       <div class="body">${x.summary?`<p>${esc(x.summary)}</p>`:""}
       ${x.decisions?`<p class="meta">Decisions</p><ul class="plain">${String(x.decisions).split("\n").filter(Boolean).map(d=>`<li>${esc(d)}</li>`).join("")}</ul>`:""}
       ${x.notes?`<p class="meta">Notes</p><div class="note">${esc(x.notes)}</div>`:""}
@@ -373,7 +381,7 @@ function viewMeetings(){
 function viewSettings(){
   return `<h2>Settings</h2>
   <div class="card"><h3>You</h3><p>Using the app as <b>${esc(myName())}</b>.</p>
-    <div class="bar"><button class="btn" id="switchUser">Change person or PIN</button></div></div>
+    <div class="bar"><button class="btn" id="switchUser">Change name or team code</button></div></div>
   <div class="card"><h3>Where your data is saved</h3>
     <p class="kv"><b>Everything is kept in ${esc(S.info&&S.info.owner?S.info.owner:"the Envoler company Google account")}.</b> Nobody else needs a Google sign-in or shared access, and the sheet always stays with this account.</p>
     <p class="kv"><b>Meetings and follow-ups:</b> one Google Sheet, "Envoler Follow-ups Data", in the Envoler Meetings folder.</p>
@@ -404,33 +412,38 @@ function installHint(){
   return "";
 }
 function viewSetup(){
-  const names=CFG.TEAM.map(p=>p.name).filter(Boolean);
-  const cur=S.me&&S.me.name||"";
+  const sugg=[]; CFG.TEAM.forEach(p=>{ if(p.name) sugg.push(p.name); }); (LS.get("knownNames",[])||[]).forEach(n=>{ if(!sugg.includes(n)) sugg.push(n); });
+  const name=S.setupName!=null?S.setupName:(S.me&&S.me.name||"");
+  const email=S.setupEmail!=null?S.setupEmail:(S.me&&S.me.email||"");
   return `<div class="signin"><section class="board">
     <img class="signin-logo" src="icons/envoler-logo.jpg" alt="Envoler Innovations">
     <div class="big" style="font-size:40px">Follow-ups</div>
     <p>Log every meeting, pull out the next steps, and get reminded before anything slips.</p>
-    ${!CFG.API_URL?`<p style="color:#FFB4A8">Setup isn't finished: add API_URL to config.js.</p>`:""}
     <label for="whoami" style="color:var(--board-dim)">Your name</label>
-    ${names.length?`<select id="whoami">${names.map(n=>`<option ${n===cur?"selected":""}>${esc(n)}</option>`).join("")}</select>`:`<input id="whoami" value="${esc(cur)}" placeholder="Your name">`}
-    <label for="pin" style="color:var(--board-dim)">Team PIN</label>
-    <input id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="Ask Piyush or Abhishek">
+    <input id="whoami" type="text" list="knownNames" value="${esc(name)}" placeholder="Type your full name" autocomplete="name" autocapitalize="words" enterkeyhint="next">
+    <datalist id="knownNames">${sugg.map(n=>`<option value="${esc(n)}">`).join("")}</datalist>
+    <label for="myEmail" style="color:var(--board-dim)">Your email (optional, for calendar reminders)</label>
+    <input id="myEmail" type="email" value="${esc(email)}" placeholder="name@gmail.com" autocomplete="email" autocapitalize="off" enterkeyhint="next">
+    <label for="pin" style="color:var(--board-dim)">Team code</label>
+    <input id="pin" type="password" value="${esc(S.setupPin||"")}" placeholder="The code from your team" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go">
     <button class="gbtn" id="doSetup" style="margin-top:16px">Continue</button>
     ${S.error?`<p style="color:#FFB4A8">${esc(S.error)}</p>`:""}
   </section>${installHint()}</div>`;
 }
 async function doSetup(){
-  const name=($("#whoami").value||"").trim(), pin=($("#pin").value||"").trim();
-  if(!name||!pin){ toast("Choose your name and enter the team PIN."); return; }
+  const name=($("#whoami").value||"").trim().replace(/\s+/g," "), pin=($("#pin").value||"").trim(), email=(($("#myEmail")||{}).value||"").trim();
+  if(!name||!pin){ toast("Type your name and the team code."); return; }
   const prev={me:S.me,pin:S.pin};
-  S.me={name}; S.pin=pin;
+  S.me={name,email}; S.pin=pin;
   const b=$("#doSetup"); if(b){ b.disabled=true; b.textContent="Checking…"; }
   try{ await api("hello"); }
   catch(e){
     S.me=prev.me; S.pin="";
-    S.error = e instanceof PinError ? "That PIN isn't right. Check it with Piyush or Abhishek." : e.message==="setup" ? "Setup isn't finished: add API_URL to config.js." : "Couldn't reach the team sheet. Check your internet and try again.";
+    S.error = e instanceof PinError ? "That team code isn't right. Check it with your team." : e.message==="setup" ? "Setup isn't finished: add API_URL to config.js." : "Couldn't reach the team sheet. Check your internet and try again.";
     render(); return;
   }
+  const known=LS.get("knownNames",[])||[]; if(!known.includes(name)) LS.set("knownNames",known.concat(name).slice(-20));
+  S.setupName=null; S.setupEmail=null; S.setupPin="";
   LS.set("me",S.me); LS.set("pin",S.pin); S.error=""; S.view="today"; render(); loadAll();
 }
 function render(){
@@ -438,7 +451,9 @@ function render(){
 
   const ae=document.activeElement, active=ae&&ae.id, caret=ae&&ae.selectionStart;
   if(S.view==="log") captureDraft();
-  if(!signedIn()){ $("#tabs").hidden=true; app.innerHTML=viewSetup(); return; }
+  if(!signedIn()){ $("#tabs").hidden=true; app.innerHTML=viewSetup();
+    if(active){ const el=document.getElementById(active); if(el){ el.focus({preventScroll:true}); try{ if(caret!=null) el.setSelectionRange(caret,caret); }catch(e){} } }
+    return; }
   $("#tabs").hidden=false;
   app.innerHTML = S.view==="today"?viewToday(): S.view==="log"?viewLog(): S.view==="people"?viewPeople(): S.view==="settings"?viewSettings(): viewMeetings();
   document.querySelectorAll("#tabs button").forEach(b=>{ if(b.dataset.v===S.view) b.setAttribute("aria-current","page"); else b.removeAttribute("aria-current"); });
@@ -449,7 +464,7 @@ function render(){
 function captureDraft(){
   const d=S.draft, gid=id=>document.getElementById(id);
   if(!gid("person")) return;
-  d.person=gid("person").value; d.org=gid("org").value; d.date=gid("mdate").value||today(); d.notes=gid("notes").value;
+  d.person=gid("person").value; d.org=gid("org").value; d.date=gid("mdate").value||today(); if(gid("mloc")) d.location=gid("mloc").value; d.notes=gid("notes").value;
   if(gid("summary")) d.summary=gid("summary").value;
   document.querySelectorAll(".draft-f").forEach(el=>{ const it=d.items[+el.dataset.i]; if(it) el.querySelectorAll("[data-f]").forEach(i=>{ it[i.dataset.f]=i.value; }); });
   LS.set("draft",d);
@@ -460,6 +475,26 @@ function matchOwner(name){
   const hit=teamNames().find(t=>t.toLowerCase().includes(n)||n.includes(t.toLowerCase().split(" ")[0]));
   return hit||myName();
 }
+async function useMyLocation(){
+  captureDraft();
+  if(!navigator.geolocation){ toast("Location isn't available on this phone. Type it instead."); return; }
+  toast("Finding your location…");
+  navigator.geolocation.getCurrentPosition(async pos=>{
+    const lat=pos.coords.latitude.toFixed(5), lon=pos.coords.longitude.toFixed(5);
+    let label=`${lat}, ${lon}`;
+    try{
+      const r=await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=17&accept-language=en&lat=${lat}&lon=${lon}`);
+      const j=await r.json(), a=j.address||{};
+      const parts=[j.name||a.building||a.office||a.amenity||a.road, a.suburb||a.neighbourhood||a.village, a.city||a.town||a.county||a.state_district, a.state]
+        .filter(Boolean).filter((v,i,arr)=>arr.indexOf(v)===i);
+      if(parts.length) label=parts.slice(0,3).join(", ");
+    }catch(e){}
+    S.draft.location=label; LS.set("draft",S.draft);
+    const el=$("#mloc"); if(el) el.value=label; toast("Location added. You can edit it.");
+  },err=>{
+    toast(err.code===1?"Location permission is off. Allow it for this app in your phone's settings, or type the place.":"Couldn't get your location. Type it instead.");
+  },{enableHighAccuracy:true,timeout:15000,maximumAge:60000});
+}
 function claudePrompt(){
   const d=S.draft;
   return `You help Envoler Innovations, an Indian drone and UAV company, keep track of meetings with clients, government bodies, PSUs and partners.
@@ -469,7 +504,7 @@ Read the meeting notes below and reply with ONLY a JSON object in one code block
  "decisions": ["short decision"],
  "followups": [{"task": "specific next step starting with a verb", "contact": "person it concerns", "org": "their organisation", "due": "YYYY-MM-DD", "owner": "team member name, or 'me' if the writer owns it"}]}
 Resolve relative dates like "next Tuesday" against today. If no date is given for a follow-up, use ${addDays(today(),3)}. Include every promise, document to send, call to make, or meeting to set up. Do not invent commitments.
-Meeting with: ${d.person||"unknown"} (${d.org||"unknown organisation"}), on ${d.date}.
+Meeting with: ${d.person||"unknown"} (${d.org||"unknown organisation"}), on ${d.date}${d.location?", at "+d.location:""}.
 Notes:
 """${d.notes.slice(0,60000)}"""`;
 }
@@ -507,7 +542,7 @@ async function saveMeeting(){
   captureDraft();
   const d=S.draft;
   if(!d.person.trim()&&!d.notes.trim()){ toast("Add who you met or some notes first."); return; }
-  const meeting={id:uid(),date:d.date,person:d.person.trim(),org:d.org.trim(),summary:d.summary,decisions:d.decisions.join("\n"),notes:d.notes,createdBy:myName(),createdAt:Date.now(),docUrl:""};
+  const meeting={id:uid(),date:d.date,location:(d.location||"").trim(),person:d.person.trim(),org:d.org.trim(),summary:d.summary,decisions:d.decisions.join("\n"),notes:d.notes,createdBy:myName(),createdAt:Date.now(),docUrl:""};
   const followups=d.items.filter(it=>it.task.trim()).map(it=>({id:uid(),task:it.task.trim(),contact:(it.contact||meeting.person).trim(),org:(it.org||meeting.org).trim(),
     due:it.due||addDays(today(),3),owner:it.owner||myName(),status:"open",meetingId:meeting.id,createdBy:myName(),createdAt:Date.now(),doneAt:"",eventId:""}));
   queue({type:"meeting",meeting,followups,useCal:S.useCal});
@@ -647,7 +682,7 @@ async function processQueue(){
 }
 let worker=null, wReq=0;
 const wPending=new Map();
-const modelId=()=>S.transQuality==="high"?"onnx-community/whisper-small":"onnx-community/whisper-base";
+const modelId=()=>S.transQuality==="high"?"Xenova/whisper-small":"Xenova/whisper-base";
 function getWorker(){
   if(worker) return worker;
   worker=new Worker("whisper-worker.js",{type:"module"});
@@ -729,9 +764,18 @@ function recorderHTML(){
 /* ---------- events ---------- */
 let saveT;
 document.addEventListener("input",e=>{
+  if(e.target.id==="whoami"){ S.setupName=e.target.value; return; }
+  if(e.target.id==="myEmail"){ S.setupEmail=e.target.value; return; }
+  if(e.target.id==="pin"){ S.setupPin=e.target.value; return; }
   if(e.target.id==="pq"){ S.peopleQ=e.target.value; render(); return; }
   if(e.target.id==="claudeReply"){ S.claudeReply=e.target.value; return; }
   if(S.view==="log"){ clearTimeout(saveT); saveT=setTimeout(captureDraft,400); }
+});
+document.addEventListener("keydown",e=>{
+  if(e.key!=="Enter") return;
+  if(e.target.id==="whoami"){ e.preventDefault(); const n=$("#myEmail"); if(n) n.focus(); }
+  else if(e.target.id==="myEmail"){ e.preventDefault(); const n=$("#pin"); if(n) n.focus(); }
+  else if(e.target.id==="pin"){ e.preventDefault(); doSetup(); }
 });
 document.addEventListener("change",e=>{
   if(e.target.id==="upload"){ const f=e.target.files&&e.target.files[0]; e.target.value=""; handleUpload(f); return; }
@@ -748,6 +792,7 @@ document.addEventListener("click",async e=>{
     case "syncNow": return sync();
     case "openSettings": if(S.view==="log") captureDraft(); S.view="settings"; render(); window.scrollTo(0,0); return;
     case "back": S.view="today"; render(); return;
+    case "useLoc": return useMyLocation();
     case "askClaude": return askClaude();
     case "applyClaude": return applyClaude();
     case "cancelClaude": S.showPaste=false; S.claudeReply=""; render(); return;
@@ -772,7 +817,7 @@ document.addEventListener("click",async e=>{
 window.addEventListener("online",()=>{ S.online=true; render(); sync(); processQueue(); });
 window.addEventListener("offline",()=>{ S.online=false; render(); });
 document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible" && Date.now()-S.lastLoad>60000 && signedIn()) sync(); });
-window.addEventListener("beforeinstallprompt",e=>{ e.preventDefault(); S.installEvt=e; render(); });
+window.addEventListener("beforeinstallprompt",e=>{ e.preventDefault(); S.installEvt=e; if(signedIn()) render(); });
 
 /* ---------- start ---------- */
 ["oaKey","aiKey","token","sheetId","lastSilent","oauthState","returnView"].forEach(k=>LS.del(k));

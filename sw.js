@@ -1,5 +1,5 @@
 /* Envoler Follow-ups service worker: lets the app open without signal. */
-const VERSION = "envoler-v5";
+const VERSION = "envoler-v6";
 const SHELL = ["./", "./index.html", "./config.js", "./manifest.webmanifest", "./whisper-worker.js",
   "./icons/app-192.png", "./icons/app-512.png", "./icons/app-touch-180.png", "./icons/app-favicon.png", "./icons/envoler-logo.jpg"];
 
