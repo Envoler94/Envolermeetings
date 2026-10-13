@@ -121,6 +121,7 @@ ul.plain{padding-left:18px;margin:6px 0}
 .tstatus{font-size:14px;margin-top:10px;padding:8px 10px;border-radius:8px;background:var(--sky-soft);color:var(--ink)}
 .tstatus.warn{background:var(--amber-soft)}
 .upload input{display:none}
+.signin select,.signin input{color:var(--ink);background:var(--surface)}
 .signin-logo{display:block;width:100%;max-width:340px;border-radius:12px;margin:0 auto 18px}
 .kv{font-size:15px;margin:6px 0}
 nav.tabs{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);
@@ -148,15 +149,7 @@ nav.tabs[hidden]{display:none}
 (() => {
 "use strict";
 const CFG = Object.assign({TEAM:[],TIME_ZONE:"Asia/Kolkata",REMINDER_TIME:"10:00",CLAUDE_MODEL:"claude-sonnet-5-5"}, window.ENVOLER_CONFIG||{});
-const SCOPES = ["openid","email","profile",
-  "https://www.googleapis.com/auth/drive",
-  "https://www.googleapis.com/auth/spreadsheets",
-  "https://www.googleapis.com/auth/calendar.events"].join(" ");
-const SHEET_NAME = "Envoler Follow-ups Data";
-const M_COLS = ["id","date","person","org","summary","decisions","notes","createdBy","createdAt","docUrl"];
-const F_COLS = ["id","task","contact","org","due","owner","status","meetingId","createdBy","createdAt","doneAt","eventId"];
-const M_END = "J", F_END = "L";
-
+if(!/^https:\/\/script\.google(usercontent)?\.com\//.test(CFG.API_URL||"")) CFG.API_URL="";
 /* ---------- helpers ---------- */
 const $ = (s, r=document) => r.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -177,12 +170,11 @@ const blankDraft = () => ({person:"",org:"",date:today(),notes:"",summary:"",dec
 
 const S = {
   view:"today", scope:"mine",
-  token:LS.get("token",null), me:LS.get("me",null),
-  sheetId: CFG.SHEET_ID || LS.get("sheetId",""),
+  me:LS.get("me",null), pin:LS.get("pin",""), info:LS.get("info",null),
   meetings:LS.get("cache",{}).meetings||[], followups:LS.get("cache",{}).followups||[],
   outbox:LS.get("outbox",[]), draft:LS.get("draft",null)||blankDraft(),
-  aiKey:LS.get("aiKey",""), useCal:LS.get("useCal",true), transLang:LS.get("transLang","english"), transQuality:LS.get("transQuality","standard"), showPaste:false, claudeReply:"",
-  trans:{pending:0,busy:false,msg:"",warn:false}, sheetInfo:null,
+  useCal:LS.get("useCal",true), transLang:LS.get("transLang","english"), transQuality:LS.get("transQuality","standard"), showPaste:false, claudeReply:"",
+  trans:{pending:0,busy:false,msg:"",warn:false},
   loading:false, lastLoad:0, busy:false, peopleQ:"", recording:false, flushing:false,
   online:navigator.onLine, installEvt:null, error:""
 };
@@ -190,182 +182,71 @@ const S = {
 let tT;
 function toast(msg){ let t=$(".toast"); if(!t){t=document.createElement("div");t.className="toast";t.setAttribute("role","status");document.body.appendChild(t);} t.textContent=msg; clearTimeout(tT); tT=setTimeout(()=>t.remove(),3600); }
 
-/* ---------- Google sign-in (redirect flow: works in installed apps on iOS and Android) ---------- */
-const redirectUri = () => location.origin + location.pathname.replace(/index\.html$/,"");
-function signIn(silent){
-  if(!CFG.GOOGLE_CLIENT_ID || CFG.GOOGLE_CLIENT_ID.startsWith("PASTE")){ S.error="Add your Google Client ID to config.js first (README step 3)."; render(); return; }
-  if(silent){
-    if(Date.now()-LS.get("lastSilent",0)<60000){ render(); return; } // avoid sign-in loops
-    LS.set("lastSilent",Date.now());
-  }
-  captureDraft(); LS.set("draft",S.draft);
-  const state=uid(); LS.set("oauthState",state); LS.set("returnView",S.view);
-  const p=new URLSearchParams({client_id:CFG.GOOGLE_CLIENT_ID,redirect_uri:redirectUri(),response_type:"token",scope:SCOPES,include_granted_scopes:"true",state});
-  if(silent && S.me && S.me.email){ p.set("prompt","none"); p.set("login_hint",S.me.email); }
-  else if(S.me && S.me.email){ p.set("login_hint",S.me.email); }
-  location.href="https://accounts.google.com/o/oauth2/v2/auth?"+p.toString();
+/* ---------- Team back end (Google Apps Script in the owner's account) ---------- */
+// Every read and write goes through one script running as envolerinnovations@gmail.com,
+// so the sheet, Docs and calendar reminders always belong to the owner account.
+class PinError extends Error{}
+async function api(action, data){
+  if(!CFG.API_URL || !/^https:\/\/script\.google\.com\//.test(CFG.API_URL)) throw new Error("setup");
+  let r;
+  try{
+    r=await fetch(CFG.API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
+      body:JSON.stringify(Object.assign({action,pin:S.pin,user:myName()},data||{}))});
+  }catch(e){ throw new Error("network"); }
+  if(!r.ok) throw new Error("Server returned "+r.status);
+  let j; try{ j=await r.json(); }catch(e){ throw new Error("The back end didn't answer correctly. Check API_URL in config.js."); }
+  if(j.code==="pin") throw new PinError(j.error);
+  if(j.error) throw new Error(j.error);
+  return j;
 }
-let returnedFromGoogle=false;
-function readRedirect(){
-  if(!location.hash || location.hash.length<2) return;
-  returnedFromGoogle=true;
-  const h=new URLSearchParams(location.hash.slice(1));
-  if(!h.get("access_token") && !h.get("error")) return;
-  history.replaceState(null,"",redirectUri());
-  if(h.get("state")!==LS.get("oauthState",null)){ S.error="Sign-in check failed. Please sign in again."; return; }
-  LS.del("oauthState"); S.view=LS.get("returnView","today");
-  if(h.get("error")){ S.token=null; LS.del("token"); if(h.get("error")!=="interaction_required"&&h.get("error")!=="login_required"&&h.get("error")!=="consent_required") S.error="Google sign-in didn't complete. Try again."; return; }
-  S.token={value:h.get("access_token"),exp:Date.now()+(parseInt(h.get("expires_in")||"3600",10)-120)*1000};
-  LS.set("token",S.token);
+function pinFailed(){
+  S.pin=""; LS.del("pin"); S.error="The team PIN has changed. Enter the new PIN to continue."; render();
 }
-const tokenOk = () => S.token && S.token.exp > Date.now();
-function signOut(){ LS.del("token"); LS.del("me"); S.token=null; S.me=null; render(); }
-
-class AuthError extends Error{}
-async function g(url, opts={}){
-  if(!tokenOk()) throw new AuthError("expired");
-  const r=await fetch(url,Object.assign({},opts,{headers:Object.assign({Authorization:"Bearer "+S.token.value},opts.headers||{})}));
-  if(r.status===401){ S.token=null; LS.del("token"); throw new AuthError("expired"); }
-  if(!r.ok){ let m=""; try{ m=(await r.json()).error.message; }catch(e){} const err=new Error(m||("Google returned "+r.status)); err.status=r.status; throw err; }
-  return r.status===204?null:r.json();
-}
-const gj = (url, method, body) => g(url,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-
-/* ---------- Sheets as the shared database ---------- */
-const SH = "https://sheets.googleapis.com/v4/spreadsheets/";
-const toObj = (cols,row) => Object.fromEntries(cols.map((c,i)=>[c,row[i]??""]));
-const toRow = (cols,o) => cols.map(c=>o[c]==null?"":String(o[c]));
-
-async function ensureSheet(){
-  if(S.sheetId) return S.sheetId;
-  const q=encodeURIComponent(`name='${SHEET_NAME}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`);
-  const found=await g(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true&pageSize=1`);
-  if(found.files && found.files[0]){ S.sheetId=found.files[0].id; LS.set("sheetId",S.sheetId); return S.sheetId; }
-  const hdr=cols=>[{values:cols.map(c=>({userEnteredValue:{stringValue:c}}))}];
-  const created=await gj(SH,"POST",{properties:{title:SHEET_NAME},sheets:[
-    {properties:{title:"Meetings",gridProperties:{frozenRowCount:1}},data:[{startRow:0,startColumn:0,rowData:hdr(M_COLS)}]},
-    {properties:{title:"Followups",gridProperties:{frozenRowCount:1}},data:[{startRow:0,startColumn:0,rowData:hdr(F_COLS)}]}]});
-  S.sheetId=created.spreadsheetId; LS.set("sheetId",S.sheetId);
-  if(CFG.DRIVE_FOLDER_ID){ try{ await g(`https://www.googleapis.com/drive/v3/files/${S.sheetId}?addParents=${CFG.DRIVE_FOLDER_ID}&removeParents=root&supportsAllDrives=true`,{method:"PATCH"}); }catch(e){} }
-  return S.sheetId;
-}
+const signedIn = () => !!(S.me && S.me.name && S.pin);
 async function loadAll(quiet){
-  if(!tokenOk()||!navigator.onLine) return;
+  if(!signedIn()||!navigator.onLine) return;
   S.loading=!quiet; if(!quiet) render();
   try{
-    if(!S.me || !S.me.googleName){
-      const u=await g("https://www.googleapis.com/oauth2/v3/userinfo");
-      S.me={email:u.email,googleName:u.name||u.email,name:u.name||u.email};
-    }
-    { const t=CFG.TEAM.find(p=>p.email && p.email.toLowerCase()===String(S.me.email).toLowerCase());
-      S.me.name=t?t.name:S.me.googleName; LS.set("me",S.me); }
-    await ensureSheet();
     await flushOutbox();
-    const r=await g(`${SH}${S.sheetId}/values:batchGet?ranges=Meetings!A2:${M_END}&ranges=Followups!A2:${F_END}`);
-    const [m,f]=r.valueRanges;
-    S.meetings=(m.values||[]).map(row=>toObj(M_COLS,row)).filter(x=>x.id).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
-    S.followups=(f.values||[]).map(row=>toObj(F_COLS,row)).filter(x=>x.id);
+    const r=await api("list");
+    S.meetings=(r.meetings||[]).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+    S.followups=r.followups||[];
+    S.info={sheetUrl:r.sheetUrl,folderUrl:r.folderUrl,owner:r.owner}; LS.set("info",S.info);
     LS.set("cache",{meetings:S.meetings,followups:S.followups});
     S.lastLoad=Date.now(); S.error="";
   }catch(e){
-    if(e instanceof AuthError){ signIn(true); return; }
-    S.error = e.status===403||e.status===404 ? "Can't open the team sheet. Ask the owner to share the Envoler Meetings folder with you as an editor." : "Couldn't load from Google. Showing your last saved copy.";
+    if(e instanceof PinError){ S.loading=false; pinFailed(); return; }
+    S.error = e.message==="network" ? "Couldn't reach the team sheet. Showing your last saved copy." : "Couldn't load the team sheet: "+e.message;
   }
   S.loading=false; render();
 }
-async function findRow(tab,id){
-  const r=await g(`${SH}${S.sheetId}/values/${tab}!A:A`);
-  const i=(r.values||[]).findIndex(v=>v[0]===id);
-  return i<0?null:i+1;
-}
-async function appendRows(tab,end,rows){
-  if(!rows.length) return;
-  await gj(`${SH}${S.sheetId}/values/${tab}!A1:${end}1:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,"POST",{values:rows});
-}
-async function updateRow(tab,end,cols,obj){
-  const row=await findRow(tab,obj.id); if(!row) return;
-  await gj(`${SH}${S.sheetId}/values/${tab}!A${row}:${end}${row}?valueInputOption=RAW`,"PUT",{values:[toRow(cols,obj)]});
-}
-
-/* ---------- Drive meeting notes and Calendar reminders ---------- */
 function teamEmail(name){ const t=CFG.TEAM.find(p=>p.name===name); return t&&t.email?t.email:""; }
-function noteHTML(m,fs){
-  const li=a=>a.length?`<ul>${a.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:"<p>None</p>";
-  return `<html><body><h1>Meeting with ${esc(m.person||"—")}${m.org?", "+esc(m.org):""}</h1>
-  <p><b>Date:</b> ${esc(fmt(m.date))}<br><b>Logged by:</b> ${esc(m.createdBy||"")}</p>
-  <h2>Summary</h2><p>${esc(m.summary||"—")}</p>
-  <h2>Decisions</h2>${li(String(m.decisions||"").split("\n").filter(Boolean))}
-  <h2>Follow-ups</h2>${li(fs.map(f=>`${f.task} (due ${fmt(f.due)}, owner ${f.owner||"—"})`))}
-  <h2>Notes</h2>${String(m.notes||"—").split("\n").map(l=>`<p>${esc(l)}</p>`).join("")}</body></html>`;
-}
-async function createDoc(m,fs){
-  const b="envoler"+uid();
-  const meta={name:`${m.date} ${m.person||"Meeting"}${m.org?", "+m.org:""}`,mimeType:"application/vnd.google-apps.document"};
-  if(CFG.DRIVE_FOLDER_ID) meta.parents=[CFG.DRIVE_FOLDER_ID];
-  const body=`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n${noteHTML(m,fs)}\r\n--${b}--`;
-  const r=await g("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink&supportsAllDrives=true",
-    {method:"POST",headers:{"Content-Type":"multipart/related; boundary="+b},body});
-  return r.webViewLink||"";
-}
-function eventBody(f){
-  const [h,mi]=(CFG.REMINDER_TIME||"10:00").split(":").map(Number);
-  const end=`${pad(h)}:${pad((mi||0)+15>59?59:(mi||0)+15)}`;
-  const ev={summary:`Follow up: ${f.task}`,
-    description:`With ${f.contact||"—"}${f.org?", "+f.org:""}\nOwner: ${f.owner||"—"}\nFrom Envoler Follow-ups`,
-    start:{dateTime:`${f.due}T${pad(h)}:${pad(mi||0)}:00`,timeZone:CFG.TIME_ZONE},
-    end:{dateTime:`${f.due}T${end}:00`,timeZone:CFG.TIME_ZONE},
-    reminders:{useDefault:false,overrides:[{method:"popup",minutes:0},{method:"popup",minutes:24*60}]}};
-  const em=teamEmail(f.owner);
-  if(em && (!S.me || em.toLowerCase()!==S.me.email.toLowerCase())) ev.attendees=[{email:em}];
-  return ev;
-}
-const CAL="https://www.googleapis.com/calendar/v3/calendars/primary/events";
 
 /* ---------- Outbox: saves work offline and syncs when signal returns ---------- */
 function queue(op){ S.outbox.push(op); LS.set("outbox",S.outbox); }
 async function flushOutbox(){
-  if(S.flushing||!S.outbox.length||!tokenOk()||!navigator.onLine) return;
+  if(S.flushing||!S.outbox.length||!signedIn()||!navigator.onLine) return;
   S.flushing=true;
   try{
-    await ensureSheet();
     while(S.outbox.length){
       const op=S.outbox[0];
       if(op.type==="meeting"){
-        if(op.useCal && !op.calDone){
-          for(const f of op.followups){ if(!f.eventId){ try{ const ev=await gj(CAL+"?sendUpdates=all","POST",eventBody(f)); f.eventId=ev.id; }catch(e){ if(e instanceof AuthError) throw e; } LS.set("outbox",S.outbox); } }
-          op.calDone=true; LS.set("outbox",S.outbox);
-        }
-        if(!op.docDone){ try{ op.meeting.docUrl=await createDoc(op.meeting,op.followups); }catch(e){ if(e instanceof AuthError) throw e; op.docError=true; } op.docDone=true; LS.set("outbox",S.outbox); }
-        if(!op.rowsDone){
-          await appendRows("Meetings",M_END,[toRow(M_COLS,op.meeting)]);
-          await appendRows("Followups",F_END,op.followups.map(f=>toRow(F_COLS,f)));
-          op.rowsDone=true; LS.set("outbox",S.outbox);
-        }
-        if(op.docError) toast("Meeting saved. The Drive note couldn't be created; check folder access.");
+        const res=await api("saveMeeting",{meeting:op.meeting,followups:op.followups.map(f=>Object.assign({ownerEmail:teamEmail(f.owner)},f)),useCal:op.useCal});
+        if(res.docUrl){ const m=S.meetings.find(x=>x.id===op.meeting.id); if(m) m.docUrl=res.docUrl; }
       } else if(op.type==="followup"){
-        await updateRow("Followups",F_END,F_COLS,op.f);
-        if(op.f.eventId){
-          try{
-            if(op.f.status==="done") await g(`${CAL}/${op.f.eventId}`,{method:"DELETE"});
-            else if(op.calMove) await gj(`${CAL}/${op.f.eventId}`,"PATCH",{start:eventBody(op.f).start,end:eventBody(op.f).end});
-          }catch(e){ if(e instanceof AuthError) throw e; }
-        }
+        await api("updateFollowup",{f:op.f,calMove:op.calMove});
       }
       S.outbox.shift(); LS.set("outbox",S.outbox);
     }
   }catch(e){
-    if(e instanceof AuthError){ S.flushing=false; signIn(true); return; }
-    S.error="Some changes are waiting to sync. They'll go through when Google is reachable.";
+    S.flushing=false;
+    if(e instanceof PinError){ pinFailed(); return; }
+    S.error="Some changes are waiting to sync. They'll go through when the connection is back.";
+    return;
   }
   S.flushing=false;
 }
 async function sync(){ await flushOutbox(); await loadAll(true); }
-
-async function loadSheetInfo(){
-  if(!S.sheetId||!tokenOk()) return;
-  try{ const f=await g(`https://www.googleapis.com/drive/v3/files/${S.sheetId}?fields=name,owners(displayName,emailAddress)&supportsAllDrives=true`);
-    const o=(f.owners||[])[0]; S.sheetInfo={name:f.name,owner:o?(o.emailAddress||o.displayName):""}; if(S.view==="settings") render(); }catch(e){}
-}
 
 /* ---------- names ---------- */
 const myName = () => S.me ? S.me.name : "";
@@ -391,8 +272,7 @@ function banners(){
   let h="";
   if(!S.online) h+=`<div class="banner">You're offline. You can still log meetings; they'll sync when you're back online.</div>`;
   if(S.error) h+=`<div class="banner">${esc(S.error)}</div>`;
-  if(!tokenOk() && S.online) h+=`<div class="banner">Your Google session has ended, so changes can't sync.<br><button class="btn primary" id="signIn">Sign in again</button></div>`;
-  if(S.outbox.length && S.online && tokenOk()) h+=`<div class="banner">${S.outbox.length} change${S.outbox.length>1?"s":""} waiting to sync. <br><button class="btn" id="syncNow">Sync now</button></div>`;
+  if(S.outbox.length && S.online) h+=`<div class="banner">${S.outbox.length} change${S.outbox.length>1?"s":""} waiting to sync. <br><button class="btn" id="syncNow">Sync now</button></div>`;
   return h;
 }
 function viewToday(){
@@ -480,7 +360,7 @@ function viewPeople(){
 function viewMeetings(){
   const pend=pendingIds();
   return `<h2>Meetings</h2>${banners()}
-  ${CFG.DRIVE_FOLDER_ID?`<div class="bar" style="margin-top:0"><a class="btn" href="https://drive.google.com/drive/folders/${esc(CFG.DRIVE_FOLDER_ID)}" target="_blank" rel="noopener">Open Drive folder</a>${S.sheetId?`<a class="btn" href="https://docs.google.com/spreadsheets/d/${esc(S.sheetId)}" target="_blank" rel="noopener">Open team sheet</a>`:""}</div>`:""}
+  ${S.info?`<div class="bar" style="margin-top:0"><a class="btn" href="${esc(S.info.folderUrl)}" target="_blank" rel="noopener">Open Drive folder</a><a class="btn" href="${esc(S.info.sheetUrl)}" target="_blank" rel="noopener">Open team sheet</a></div>`:""}
   <div style="margin-top:12px">${S.meetings.length?S.meetings.map(x=>`<details class="person"><summary><div>
       <div class="task">${esc(x.person||"Meeting")}${x.org?`, ${esc(x.org)}`:""}</div>
       <div class="meta">${fmt(x.date)}${x.createdBy?`. Logged by ${esc(x.createdBy)}`:""}</div>${pend.has(x.id)?`<div class="pending">Waiting to sync</div>`:""}</div></summary>
@@ -492,17 +372,15 @@ function viewMeetings(){
 }
 function viewSettings(){
   return `<h2>Settings</h2>
-  <div class="card"><h3>Account</h3><p>Signed in as ${esc(S.me?S.me.name:"")}${S.me?` (${esc(S.me.email)})`:""}</p>
-    <div class="bar"><button class="btn" id="signOut">Sign out</button></div></div>
+  <div class="card"><h3>You</h3><p>Using the app as <b>${esc(myName())}</b>.</p>
+    <div class="bar"><button class="btn" id="switchUser">Change person or PIN</button></div></div>
   <div class="card"><h3>Where your data is saved</h3>
-    ${!CFG.SHEET_ID?`<div class="tstatus warn" style="margin:0 0 10px">The team sheet isn't locked in yet. Copy the Sheet ID below into SHEET_ID in config.js on GitHub. Until then, a teammate who can't see this sheet may get a separate sheet of their own.</div>`:""}
-    <p class="kv"><b>Meetings and follow-ups:</b> one shared Google Sheet for the whole team, "${esc(S.sheetInfo?S.sheetInfo.name:SHEET_NAME)}"${S.sheetInfo&&S.sheetInfo.owner?`, owned by ${esc(S.sheetInfo.owner)}`:""}. Everyone reads and writes the same sheet.</p>
-    <p class="kv"><b>Meeting notes:</b> one Google Doc per meeting in the "Envoler Meetings" Drive folder.</p>
-    <p class="kv"><b>Reminders:</b> in the Google Calendar of whoever saved the meeting, with an invite to the owner.</p>
+    <p class="kv"><b>Everything is kept in ${esc(S.info&&S.info.owner?S.info.owner:"the Envoler company Google account")}.</b> Nobody else needs a Google sign-in or shared access, and the sheet always stays with this account.</p>
+    <p class="kv"><b>Meetings and follow-ups:</b> one Google Sheet, "Envoler Follow-ups Data", in the Envoler Meetings folder.</p>
+    <p class="kv"><b>Meeting notes:</b> one Google Doc per meeting in the same folder.</p>
+    <p class="kv"><b>Reminders:</b> in the company Google Calendar, with an invite to the follow-up's owner.</p>
     <p class="kv"><b>On this phone:</b> a copy for offline use, your draft, and recordings waiting to be transcribed.</p>
-    <label>Sheet ID</label>
-    <input readonly value="${esc(S.sheetId||"Created after first sign-in")}" onclick="this.select()">
-    <div class="bar">${S.sheetId?`<a class="btn" href="https://docs.google.com/spreadsheets/d/${esc(S.sheetId)}" target="_blank" rel="noopener">Open sheet</a>`:""}${CFG.DRIVE_FOLDER_ID?`<a class="btn" href="https://drive.google.com/drive/folders/${esc(CFG.DRIVE_FOLDER_ID)}" target="_blank" rel="noopener">Open Drive folder</a>`:""}</div></div>
+    ${S.info?`<div class="bar"><a class="btn" href="${esc(S.info.sheetUrl)}" target="_blank" rel="noopener">Open sheet</a><a class="btn" href="${esc(S.info.folderUrl)}" target="_blank" rel="noopener">Open Drive folder</a></div>`:""}</div>
   <div class="card"><h3>Recording and transcription</h3>
     <p class="meta">Speech is turned into text on this phone. It's free, needs no account or key, and the audio never leaves the phone. The first time, the app downloads the speech model, so use Wi-Fi.</p>
     <label for="transLang">Transcript language</label>
@@ -513,7 +391,7 @@ function viewSettings(){
     <div id="recstat">${recStatusHTML()}</div></div>
   <div class="card"><h3>Reminders</h3>
     <label class="check"><input type="checkbox" id="useCal2" ${S.useCal?"checked":""}> Add follow-ups to Google Calendar</label>
-    <p class="meta">Each follow-up becomes a ${esc(CFG.REMINDER_TIME)} calendar reminder on its due date, plus one the day before. Teammates with an email in config.js get an invite.</p></div>
+    <p class="meta">Each follow-up becomes a ${esc(CFG.REMINDER_TIME)} calendar reminder on its due date, plus one the day before. Owners with an email in config.js get a calendar invite.</p></div>
   ${S.installEvt?`<div class="bar"><button class="btn primary wide" id="install">Install app on this phone</button></div>`:""}
   <div class="bar"><button class="btn wide" id="back">Back to follow-ups</button></div>`;
 }
@@ -525,22 +403,42 @@ function installHint(){
   if(ios) return `<div class="banner">To add this app to your home screen, open it in Safari, tap Share, then Add to Home Screen.<br><button class="btn" id="hideInstall">Got it</button></div>`;
   return "";
 }
-function viewSignIn(){
+function viewSetup(){
+  const names=CFG.TEAM.map(p=>p.name).filter(Boolean);
+  const cur=S.me&&S.me.name||"";
   return `<div class="signin"><section class="board">
     <img class="signin-logo" src="icons/envoler-logo.jpg" alt="Envoler Innovations">
     <div class="big" style="font-size:40px">Follow-ups</div>
-    <p>Log every meeting, pull out the next steps, and get reminded before anything slips. Your data stays in your team's Google Drive.</p>
-    <button class="gbtn" id="signIn"><svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>Sign in with Google</button>
+    <p>Log every meeting, pull out the next steps, and get reminded before anything slips.</p>
+    ${!CFG.API_URL?`<p style="color:#FFB4A8">Setup isn't finished: add API_URL to config.js.</p>`:""}
+    <label for="whoami" style="color:var(--board-dim)">Your name</label>
+    ${names.length?`<select id="whoami">${names.map(n=>`<option ${n===cur?"selected":""}>${esc(n)}</option>`).join("")}</select>`:`<input id="whoami" value="${esc(cur)}" placeholder="Your name">`}
+    <label for="pin" style="color:var(--board-dim)">Team PIN</label>
+    <input id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="Ask Piyush or Abhishek">
+    <button class="gbtn" id="doSetup" style="margin-top:16px">Continue</button>
     ${S.error?`<p style="color:#FFB4A8">${esc(S.error)}</p>`:""}
   </section>${installHint()}</div>`;
 }
-
+async function doSetup(){
+  const name=($("#whoami").value||"").trim(), pin=($("#pin").value||"").trim();
+  if(!name||!pin){ toast("Choose your name and enter the team PIN."); return; }
+  const prev={me:S.me,pin:S.pin};
+  S.me={name}; S.pin=pin;
+  const b=$("#doSetup"); if(b){ b.disabled=true; b.textContent="Checking…"; }
+  try{ await api("hello"); }
+  catch(e){
+    S.me=prev.me; S.pin="";
+    S.error = e instanceof PinError ? "That PIN isn't right. Check it with Piyush or Abhishek." : e.message==="setup" ? "Setup isn't finished: add API_URL to config.js." : "Couldn't reach the team sheet. Check your internet and try again.";
+    render(); return;
+  }
+  LS.set("me",S.me); LS.set("pin",S.pin); S.error=""; S.view="today"; render(); loadAll();
+}
 function render(){
   const app=$("#app");
-  const signedIn=!!S.me && (tokenOk()||S.meetings.length||S.followups.length||S.outbox.length);
+
   const ae=document.activeElement, active=ae&&ae.id, caret=ae&&ae.selectionStart;
   if(S.view==="log") captureDraft();
-  if(!signedIn){ $("#tabs").hidden=true; app.innerHTML=viewSignIn(); return; }
+  if(!signedIn()){ $("#tabs").hidden=true; app.innerHTML=viewSetup(); return; }
   $("#tabs").hidden=false;
   app.innerHTML = S.view==="today"?viewToday(): S.view==="log"?viewLog(): S.view==="people"?viewPeople(): S.view==="settings"?viewSettings(): viewMeetings();
   document.querySelectorAll("#tabs button").forEach(b=>{ if(b.dataset.v===S.view) b.setAttribute("aria-current","page"); else b.removeAttribute("aria-current"); });
@@ -844,11 +742,11 @@ document.addEventListener("click",async e=>{
   if(t.dataset.v){ if(S.view==="log") captureDraft(); S.view=t.dataset.v; render(); window.scrollTo(0,0); return; }
   if(t.dataset.scope){ S.scope=t.dataset.scope; render(); return; }
   switch(t.id){
-    case "signIn": return signIn(false);
-    case "signOut": return signOut();
+    case "doSetup": return doSetup();
+    case "switchUser": S.pin=""; LS.del("pin"); S.error=""; render(); return;
     case "refresh": toast("Refreshing…"); return sync();
     case "syncNow": return sync();
-    case "openSettings": if(S.view==="log") captureDraft(); S.view="settings"; render(); window.scrollTo(0,0); loadSheetInfo(); return;
+    case "openSettings": if(S.view==="log") captureDraft(); S.view="settings"; render(); window.scrollTo(0,0); return;
     case "back": S.view="today"; render(); return;
     case "askClaude": return askClaude();
     case "applyClaude": return applyClaude();
@@ -873,17 +771,15 @@ document.addEventListener("click",async e=>{
 });
 window.addEventListener("online",()=>{ S.online=true; render(); sync(); processQueue(); });
 window.addEventListener("offline",()=>{ S.online=false; render(); });
-document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible" && Date.now()-S.lastLoad>60000){ if(tokenOk()) sync(); } });
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible" && Date.now()-S.lastLoad>60000 && signedIn()) sync(); });
 window.addEventListener("beforeinstallprompt",e=>{ e.preventDefault(); S.installEvt=e; render(); });
 
 /* ---------- start ---------- */
-LS.del("oaKey"); LS.del("aiKey");
+["oaKey","aiKey","token","sheetId","lastSilent","oauthState","returnView"].forEach(k=>LS.del(k));
 if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
-readRedirect();
 render();
 processQueue();
-if(tokenOk()) loadAll();
-else if(S.me && navigator.onLine && !returnedFromGoogle) signIn(true);
+if(signedIn()) loadAll();
 })();
 </script>
 </body>
