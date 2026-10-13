@@ -1,21 +1,9 @@
-/* Envoler Follow-ups settings. */
 window.ENVOLER_CONFIG = {
-  // Google Cloud > Google Auth Platform > Clients
-  GOOGLE_CLIENT_ID: "14486273241-ct5badvdgdsgteii0madpjfn2kdunuq0.apps.googleusercontent.com",
-
-  // The "Envoler Meetings" folder in Google Drive
-  DRIVE_FOLDER_ID: "1f-CKgVbPnkKIHN2h27mCuG7cBpOBP48b7j1PWEYhMHs",
-
-  // Paste the Sheet ID from the app's Settings screen here
-  SHEET_ID: "",
-
-  // Each person's name and the exact Gmail they sign in with
+  API_URL: "https://script.google.com/macros/s/AKfycby0scCScMkUt45kK9C420hmsLl_CpZmQ6ybovN6rCwlctnkj3Z5dz3Q1N4u0qYpDUzZ7A/exec",
   TEAM: [
-    { name: "Piyush Jain", email: "admin@envoler.in" },
-    { name: "Abhishek Goyal", email: "envolerinnovations@gmail.com" }
+    { name: "Piyush Jain", email: "94.jain@gmail.com" },
+    { name: "Abhishek Goyal", email: "" }
   ],
-
-  CLAUDE_MODEL: "claude-sonnet-5-5",
   TIME_ZONE: "Asia/Kolkata",
   REMINDER_TIME: "10:00"
 };
